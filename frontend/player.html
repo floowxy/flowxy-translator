@@ -7,8 +7,12 @@
     <title>Video Player | Flowxy-Translator</title>
     <link rel="stylesheet" href="/static/styles.css" />
     <style>
+        body {
+            padding: 1rem;
+        }
+
         .video-container {
-            max-width: 1200px;
+            max-width: 1600px;
             margin: 2rem auto;
             padding: 0 1rem;
         }
@@ -16,9 +20,10 @@
         .video-wrapper {
             position: relative;
             background: #000;
-            border-radius: 12px;
+            border-radius: var(--radius-xl);
             overflow: hidden;
-            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+            box-shadow: var(--shadow-glow), var(--shadow-lg);
+            border: 1px solid rgba(102, 126, 234, 0.3);
         }
 
         video {
@@ -28,103 +33,170 @@
 
         .subtitle-container {
             position: absolute;
-            bottom: 60px;
+            bottom: 80px;
             left: 0;
             right: 0;
             text-align: center;
             pointer-events: none;
             padding: 0 2rem;
+            z-index: 10;
         }
 
         .subtitle {
             display: inline-block;
-            background: rgba(0, 0, 0, 0.8);
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(10px);
             color: white;
-            padding: 0.5rem 1.5rem;
-            border-radius: 4px;
-            font-size: 1.2rem;
-            line-height: 1.4;
-            max-width: 80%;
+            padding: 0.75rem 2rem;
+            border-radius: var(--radius-md);
+            font-size: 1.3rem;
+            line-height: 1.5;
+            max-width: 85%;
             word-wrap: break-word;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
+            font-weight: 600;
+            letter-spacing: 0.01em;
+            border: 1px solid rgba(255, 255, 255, 0.1);
         }
 
         .subtitle.bilingual {
-            padding: 0.75rem 1.5rem;
+            padding: 1rem 2rem;
         }
 
         .subtitle-original {
             display: block;
-            margin-bottom: 0.25rem;
+            margin-bottom: 0.5rem;
             color: #fbbf24;
+            font-size: 1.1rem;
         }
 
         .subtitle-translated {
             display: block;
             color: #60a5fa;
+            font-size: 1.2rem;
         }
 
         .controls-panel {
-            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
-            padding: 1.5rem;
-            border-radius: 12px;
-            margin-top: 1.5rem;
+            background: var(--bg-card);
+            backdrop-filter: blur(20px);
+            padding: 2rem;
+            border-radius: var(--radius-xl);
+            margin-top: 2rem;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: var(--shadow-lg);
         }
 
         .control-group {
             display: flex;
-            gap: 1rem;
+            gap: 1.5rem;
             align-items: center;
             flex-wrap: wrap;
-            margin-bottom: 1rem;
+            margin-bottom: 1.5rem;
         }
 
         .control-group label {
-            color: #94a3b8;
+            color: var(--text-secondary);
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+
+        .controls-panel select {
+            background: rgba(30, 35, 71, 0.6);
+            backdrop-filter: blur(10px);
+            border: 1.5px solid rgba(255, 255, 255, 0.1);
+            border-radius: var(--radius-md);
+            padding: 0.75rem 1.25rem;
+            color: var(--text-primary);
+            font-size: 0.95rem;
             font-weight: 500;
-        }
-
-        select,
-        button {
-            padding: 0.5rem 1rem;
-            border-radius: 6px;
-            border: 1px solid #334155;
-            background: #1e293b;
-            color: white;
-            font-size: 0.9rem;
             cursor: pointer;
-            transition: all 0.2s;
+            transition: all var(--transition-fast);
+            min-width: 200px;
         }
 
-        select:hover,
-        button:hover {
-            border-color: #60a5fa;
-            background: #334155;
+        .controls-panel select:hover {
+            border-color: var(--accent-primary);
+            background: rgba(30, 35, 71, 0.8);
+        }
+
+        .controls-panel select:focus {
+            outline: none;
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.15);
+        }
+
+        .controls-panel select option {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
         }
 
         .btn-back {
-            background: #3b82f6;
+            background: var(--gradient-primary);
             border: none;
-            padding: 0.75rem 1.5rem;
-            font-weight: 600;
+            padding: 0.75rem 2rem;
+            font-weight: 700;
+            color: white;
+            border-radius: var(--radius-md);
+            cursor: pointer;
+            transition: all var(--transition-base);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+            text-transform: uppercase;
+            font-size: 0.875rem;
+            letter-spacing: 0.02em;
         }
 
         .btn-back:hover {
-            background: #2563eb;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(102, 126, 234, 0.5);
         }
 
         .status {
-            color: #94a3b8;
-            font-size: 0.9rem;
+            color: var(--text-secondary);
+            font-size: 0.95rem;
             margin-top: 1rem;
+            padding: 1rem;
+            background: rgba(16, 185, 129, 0.1);
+            border-radius: var(--radius-md);
+            border-left: 4px solid var(--accent-success);
+            font-weight: 500;
         }
 
         .error {
-            color: #ef4444;
+            color: var(--accent-error);
             background: rgba(239, 68, 68, 0.1);
-            padding: 1rem;
-            border-radius: 6px;
+            padding: 1.25rem;
+            border-radius: var(--radius-md);
             margin-top: 1rem;
+            border-left: 4px solid var(--accent-error);
+            font-weight: 600;
+        }
+
+        header {
+            margin-bottom: 1.5rem;
+        }
+
+        @media (max-width: 768px) {
+            .subtitle {
+                font-size: 1rem;
+                padding: 0.5rem 1rem;
+            }
+
+            .subtitle-original {
+                font-size: 0.9rem;
+            }
+
+            .subtitle-translated {
+                font-size: 1rem;
+            }
+
+            .control-group {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .controls-panel select {
+                min-width: 100%;
+            }
         }
     </style>
 </head>
@@ -152,12 +224,12 @@
         <!-- Control Panel -->
         <div class="controls-panel">
             <div class="control-group">
-                <label for="videoSelect">Video:</label>
+                <label for="videoSelect">📹 Video:</label>
                 <select id="videoSelect">
                     <option value="">Selecciona un video...</option>
                 </select>
 
-                <label for="subtitleMode">Subtítulos:</label>
+                <label for="subtitleMode">💬 Subtítulos:</label>
                 <select id="subtitleMode">
                     <option value="none">Sin subtítulos</option>
                     <option value="original">Original</option>
@@ -168,7 +240,7 @@
                 <button class="btn-back" onclick="location.href='/'">← Volver</button>
             </div>
 
-            <div id="status" class="status"></div>
+            <div id="status" class="status" style="display: none;"></div>
             <div id="error" class="error" style="display: none;"></div>
         </div>
     </div>
