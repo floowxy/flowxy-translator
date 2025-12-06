@@ -35,19 +35,35 @@ Ideal para desarrolladores que quieren mejorar su inglés técnico viendo tutori
 
 #### Hardware Recomendado
 
+> ⚠️ **Importante**: El sistema **funciona con o sin GPU NVIDIA**. La GPU solo acelera el proceso, pero no es obligatoria.
+
+**Con GPU NVIDIA (Recomendado para velocidad):**
+
 - **GPU**: NVIDIA RTX 4060 Ti (8GB VRAM) o superior
   - Mínimo: GTX 1660 (6GB VRAM)
   - Óptimo: RTX 4060 Ti / RTX 3060 (8GB+)
+- **Velocidad**: Transcripción ~5-10s por minuto de audio
+
+**Sin GPU (Solo CPU - Funcional pero más lento):**
+
+- **CPU**: Cualquier procesador moderno (i5/Ryzen 5 o superior)
+- **Velocidad**: Transcripción ~30-60s por minuto de audio
+- **Nota**: El sistema detecta automáticamente si no hay GPU y usa CPU
+
+**Común para ambos:**
+
 - **RAM**: 16GB mínimo, 32GB recomendado
 - **Almacenamiento**: 20GB libres (modelos + videos)
 
 #### Instalación de Dependencias del Sistema
 
+> 📝 **Nota**: CUDA Toolkit solo es necesario si tienes GPU NVIDIA y quieres aceleración. Sin CUDA, el sistema funciona en CPU.
+
 **Windows:**
 
 ```powershell
 # 1. Instalar Python 3.11 desde python.org
-# 2. Instalar CUDA Toolkit 12.1+ desde nvidia.com/cuda-downloads
+# 2. (Opcional) Instalar CUDA Toolkit 12.1+ desde nvidia.com/cuda-downloads
 # 3. Instalar FFmpeg:
 winget install FFmpeg
 # O descargar desde: https://www.gyan.dev/ffmpeg/builds/
@@ -58,7 +74,7 @@ winget install FFmpeg
 ```bash
 sudo apt update
 sudo apt install python3.11 python3.11-venv ffmpeg git
-# CUDA: Seguir guía oficial de NVIDIA
+# (Opcional) CUDA: Seguir guía oficial de NVIDIA si tienes GPU NVIDIA
 ```
 
 **macOS:**
@@ -66,6 +82,7 @@ sudo apt install python3.11 python3.11-venv ffmpeg git
 ```bash
 brew install python@3.11 ffmpeg git
 # Nota: Sin soporte GPU (solo CPU)
+```
 
 > **⚠️ Nota importante**: Los modelos de IA (Whisper, NLLB) **NO están incluidos** en este repositorio. Se descargarán automáticamente la primera vez que ejecutes el sistema (~8GB).
 
@@ -74,6 +91,7 @@ brew install python@3.11 ffmpeg git
 #### 1. Clonar Repositorio
 
 **Windows (PowerShell):**
+
 ```powershell
 git clone <repo-url>
 cd flowxy-translator
@@ -355,12 +373,29 @@ NLLB_MODEL = "nllb-200-distilled-600M"
 
 ## 📊 Rendimiento
 
-Con RTX 4060 Ti (8GB):
+### Con GPU NVIDIA (RTX 4060 Ti 8GB)
 
-- Transcripción: ~5-10s por minuto de audio
-- Traducción: ~10-30s (primera vez carga modelo)
-- Video con subtítulos: ~30s
-- Video con TTS: ~2-3min
+| Tarea | Tiempo aproximado |
+|-------|-------------------|
+| Transcripción | ~5-10s por minuto de audio |
+| Traducción | ~10-30s (primera vez carga modelo) |
+| Video con subtítulos | ~30s |
+| Video con TTS | ~2-3min |
+
+**Ejemplo**: Video de 10 minutos → Proceso completo en ~3-5 minutos
+
+### Sin GPU (Solo CPU - Intel i7 / Ryzen 7)
+
+| Tarea | Tiempo aproximado |
+|-------|-------------------|
+| Transcripción | ~30-60s por minuto de audio |
+| Traducción | ~2-5min (primera vez carga modelo) |
+| Video con subtítulos | ~2-3min |
+| Video con TTS | ~5-8min |
+
+**Ejemplo**: Video de 10 minutos → Proceso completo en ~15-25 minutos
+
+> 💡 **Tip**: Si no tienes GPU NVIDIA, puedes usar modelos más pequeños para mejorar la velocidad (ver sección de Solución de Problemas #9)
 
 ## 🐛 Solución de Problemas
 
