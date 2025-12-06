@@ -2,39 +2,25 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
 .venv/
 venv/
-env/
 ENV/
 
-# Models (VERY IMPORTANT)
-models/whisper/*
-models/nllb/*
-models/xtts/*
+# Project specific
+downloads/
+exports/
+models/
+cookies.txt
+.env
 
-# Audio temporary files
-*.wav
-*.mp3
-*.flac
-*.ogg
-*.webm
-*.tmp
-
-# FastAPI / logs
-*.log
-
-# Node (if used later)
-node_modules/
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Editor
+# IDE
 .vscode/
 .idea/
+*.swp
+*.swo
 
-# Uploads / downloads
-downloads/
-cache/
-temp/
+# OS
+.DS_Store
+Thumbs.db

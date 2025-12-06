@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Flowxy-Translator | GPU-Optimized Transcription & Translation</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+
+<body>
+  <!-- Header -->
+  <header>
+    <h1>🚀 flowxy-translator</h1>
+    <p class="subtitle">Transcripción y Traducción con GPU | Whisper v3 + NLLB</p>
+    <div id="gpu-stats" class="gpu-stats"></div>
+  </header>
+
+  <!-- Main Container -->
+  <div class="container">
+
+    <!-- Step 1: Download -->
+    <section class="card">
+      <h2>📥 1. Descargar Video de YouTube</h2>
+      <div class="input-group">
+        <input id="videoUrl" type="text" placeholder="Pega aquí el link del video de YouTube" class="input-field" />
+      </div>
+      <div class="checkbox-group" style="margin: 1rem 0;">
+        <label style="font-size: 1.1rem; font-weight: 600;">
+          <input type="checkbox" id="downloadVideoCheck" checked />
+          ✅ Descargar VIDEO COMPLETO (recomendado para ver con subtítulos)
+        </label>
+      </div>
+      <button id="downloadBtn" class="btn btn-primary" style="width: 100%; font-size: 1.2rem; padding: 1rem;">
+        ⬇️ DESCARGAR VIDEO
+      </button>
+      <div id="download-info" class="info-box hidden"></div>
+    </section>
+
+    <!-- Step 2: Media Player -->
+    <section class="card">
+      <h2>🎵 2. Reproducir Audio/Video</h2>
+      <audio id="audioPlayer" controls class="audio-player"></audio>
+      <video id="videoPlayer" controls class="audio-player" style="display:none; max-width: 100%;"></video>
+
+      <!-- BOTÓN GRANDE Y VISIBLE PARA EL REPRODUCTOR -->
+      <div id="player-link" class="info-box hidden"
+        style="margin-top: 1.5rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border: none;">
+        <a href="/player" target="_blank"
+          style="display: block; text-decoration: none; color: white; padding: 1.5rem; text-align: center; font-size: 1.3rem; font-weight: bold;">
+          🎬 ABRIR REPRODUCTOR CON SUBTÍTULOS EN TIEMPO REAL →
+        </a>
+      </div>
+    </section>
+
+    <!-- Step 3: Transcribe -->
+    <section class="card">
+      <h2>📝 3. Transcripción (Whisper AI)</h2>
+      <div class="button-group" style="gap: 1rem; margin-bottom: 1rem;">
+        <button id="transcribeBtn" class="btn btn-secondary" disabled
+          style="flex: 2; font-size: 1.1rem; padding: 0.8rem;">
+          🎤 TRANSCRIBIR AUDIO
+        </button>
+        <select id="langSelect" class="select-field" style="flex: 1;">
+          <option value="">Auto-detectar idioma</option>
+          <option value="en">Inglés</option>
+          <option value="es">Español</option>
+          <option value="fr">Francés</option>
+          <option value="de">Alemán</option>
+          <option value="it">Italiano</option>
+          <option value="pt">Portugués</option>
+          <option value="ja">Japonés</option>
+          <option value="zh">Chino</option>
+        </select>
+      </div>
+      <textarea id="transcript" rows="8" placeholder="La transcripción aparecerá aquí..." class="text-area"
+        readonly></textarea>
+      <div id="transcript-info" class="info-box hidden"></div>
+    </section>
+
+    <!-- Step 4: Translate -->
+    <section class="card">
+      <h2>🌐 4. Traducción (NLLB AI)</h2>
+      <div class="button-group" style="gap: 1rem; margin-bottom: 1rem;">
+        <button id="translateBtn" class="btn btn-secondary" disabled
+          style="flex: 2; font-size: 1.1rem; padding: 0.8rem;">
+          🌍 TRADUCIR A ESPAÑOL
+        </button>
+        <select id="targetLangSelect" class="select-field" style="flex: 1;">
+          <option value="es">→ Español</option>
+          <option value="en">→ Inglés</option>
+          <option value="fr">→ Francés</option>
+          <option value="de">→ Alemán</option>
+          <option value="it">→ Italiano</option>
+          <option value="pt">→ Portugués</option>
+          <option value="ja">→ Japonés</option>
+          <option value="zh">→ Chino</option>
+        </select>
+      </div>
+      <textarea id="translation" rows="8" placeholder="La traducción aparecerá aquí..." class="text-area"
+        readonly></textarea>
+      <div id="translation-info" class="info-box hidden"></div>
+    </section>
+
+    <!-- Step 5: Export -->
+    <section class="card">
+      <h2>💾 5. Exportar</h2>
+      <div class="export-buttons">
+        <button id="exportSrtBtn" class="btn btn-tertiary" disabled>
+          Exportar SRT
+        </button>
+        <button id="exportVttBtn" class="btn btn-tertiary" disabled>
+          Exportar VTT
+        </button>
+        <button id="exportTxtBtn" class="btn btn-tertiary" disabled>
+          Exportar TXT
+        </button>
+        <button id="exportJsonBtn" class="btn btn-tertiary" disabled>
+          Exportar JSON
+        </button>
+      </div>
+      <div class="checkbox-group">
+        <label>
+          <input type="checkbox" id="bilingualCheck" />
+          Bilingüe (original + traducción)
+        </label>
+      </div>
+    </section>
+
+    <!-- Step 6: Video Export con Subtítulos -->
+    <section class="card">
+      <h2>🎬 6. Generar Video Final con Subtítulos en Español</h2>
+      <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+        Crea un nuevo video con subtítulos en español integrados (quemados) y opcionalmente con audio TTS.
+      </p>
+
+      <div class="checkbox-group" style="margin-bottom: 1.5rem;">
+        <label style="font-size: 1.1rem; font-weight: 600;">
+          <input type="checkbox" id="includeTtsCheck" />
+          🎙️ Incluir audio TTS en español (doblaje completo)
+        </label>
+        <p style="color: var(--text-muted); font-size: 0.9rem; margin-left: 2rem; margin-top: 0.5rem;">
+          Genera voz en español y reemplaza el audio original (tarda más tiempo)
+        </p>
+      </div>
+
+      <button id="exportVideoBtn" class="btn btn-primary" disabled
+        style="width: 100%; font-size: 1.2rem; padding: 1rem;">
+        🎬 GENERAR VIDEO CON SUBTÍTULOS EN ESPAÑOL
+      </button>
+
+      <div id="export-video-progress" class="hidden"
+        style="margin-top: 1rem; padding: 1rem; background: var(--bg-tertiary); border-radius: var(--radius-md);">
+        <div style="margin-bottom: 0.5rem;">
+          <span id="export-progress-text" style="color: var(--accent-primary); font-weight: 600;">Procesando...</span>
+        </div>
+        <div style="width: 100%; background: var(--bg-primary); border-radius: var(--radius-sm); overflow: hidden;">
+          <div id="export-progress-bar"
+            style="height: 8px; background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary)); width: 0%; transition: width 0.3s;">
+          </div>
+        </div>
+      </div>
+
+      <div id="export-video-info" class="info-box hidden"></div>
+    </section>
+
+  </div>
+
+  <!-- Footer -->
+  <footer>
+    <p>
+      Powered by <strong>Whisper v3</strong> + <strong>NLLB-200</strong> + <strong>Edge-TTS</strong><br />
+      GPU: <span id="footerGpu">Cargando...</span>
+    </p>
+  </footer>
+
+  <!-- Scripts -->
+  <script src="/static/app.js"></script>
+</body>
+
+</html>

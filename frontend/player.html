@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Video Player | Flowxy-Translator</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <style>
+        .video-container {
+            max-width: 1200px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+        }
+
+        .video-wrapper {
+            position: relative;
+            background: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+        }
+
+        video {
+            width: 100%;
+            display: block;
+        }
+
+        .subtitle-container {
+            position: absolute;
+            bottom: 60px;
+            left: 0;
+            right: 0;
+            text-align: center;
+            pointer-events: none;
+            padding: 0 2rem;
+        }
+
+        .subtitle {
+            display: inline-block;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 0.5rem 1.5rem;
+            border-radius: 4px;
+            font-size: 1.2rem;
+            line-height: 1.4;
+            max-width: 80%;
+            word-wrap: break-word;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+
+        .subtitle.bilingual {
+            padding: 0.75rem 1.5rem;
+        }
+
+        .subtitle-original {
+            display: block;
+            margin-bottom: 0.25rem;
+            color: #fbbf24;
+        }
+
+        .subtitle-translated {
+            display: block;
+            color: #60a5fa;
+        }
+
+        .controls-panel {
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            padding: 1.5rem;
+            border-radius: 12px;
+            margin-top: 1.5rem;
+        }
+
+        .control-group {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-bottom: 1rem;
+        }
+
+        .control-group label {
+            color: #94a3b8;
+            font-weight: 500;
+        }
+
+        select,
+        button {
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            border: 1px solid #334155;
+            background: #1e293b;
+            color: white;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        select:hover,
+        button:hover {
+            border-color: #60a5fa;
+            background: #334155;
+        }
+
+        .btn-back {
+            background: #3b82f6;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            font-weight: 600;
+        }
+
+        .btn-back:hover {
+            background: #2563eb;
+        }
+
+        .status {
+            color: #94a3b8;
+            font-size: 0.9rem;
+            margin-top: 1rem;
+        }
+
+        .error {
+            color: #ef4444;
+            background: rgba(239, 68, 68, 0.1);
+            padding: 1rem;
+            border-radius: 6px;
+            margin-top: 1rem;
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <h1>🎬 Reproductor de Video</h1>
+        <p class="subtitle">Video con subtítulos traducidos en tiempo real</p>
+    </header>
+
+    <div class="video-container">
+        <!-- Video Player -->
+        <div class="video-wrapper">
+            <video id="videoPlayer" controls crossorigin="anonymous">
+                <track id="subtitleTrack" kind="subtitles" srclang="es" label="Español" default>
+                Tu navegador no soporta video HTML5.
+            </video>
+
+            <!-- Subtítulos superpuestos -->
+            <div class="subtitle-container">
+                <div id="currentSubtitle" class="subtitle" style="display: none;"></div>
+            </div>
+        </div>
+
+        <!-- Control Panel -->
+        <div class="controls-panel">
+            <div class="control-group">
+                <label for="videoSelect">Video:</label>
+                <select id="videoSelect">
+                    <option value="">Selecciona un video...</option>
+                </select>
+
+                <label for="subtitleMode">Subtítulos:</label>
+                <select id="subtitleMode">
+                    <option value="none">Sin subtítulos</option>
+                    <option value="original">Original</option>
+                    <option value="translated" selected>Traducido</option>
+                    <option value="bilingual">Bilingüe</option>
+                </select>
+
+                <button class="btn-back" onclick="location.href='/'">← Volver</button>
+            </div>
+
+            <div id="status" class="status"></div>
+            <div id="error" class="error" style="display: none;"></div>
+        </div>
+    </div>
+
+    <script src="/static/video_player.js"></script>
+</body>
+
+</html>
