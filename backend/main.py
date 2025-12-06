@@ -149,26 +149,44 @@ async def download_audio(req: DownloadRequest):
     try:
         out_tmpl = str(DOWNLOADS_DIR / "%(id)s.%(ext)s")
     
+        # Progress hook para logging
+        def progress_hook(d):
+            if d['status'] == 'downloading':
+                try:
+                    percent = d.get('_percent_str', 'N/A').strip()
+                    speed = d.get('_speed_str', 'N/A').strip()
+                    eta = d.get('_eta_str', 'N/A').strip()
+                    logger.info(f"Descargando: {percent} | Velocidad: {speed} | ETA: {eta}")
+                except Exception:
+                    pass  # Evitar errores de encoding
+            elif d['status'] == 'finished':
+                logger.info("Descarga completada, procesando...")
+        
         # Configuración de yt-dlp
         if req.download_video:
-            # Descargar video+audio (formato simple y confiable)
+            # Descargar video 1080p HD + audio (SOLO el video, no playlist)
             ydl_opts = {
-                "format": "best[ext=webm]/bestvideo+bestaudio[ext=webm]/best",
+                "format": "bestvideo[height<=1080][ext=webm]+bestaudio[ext=webm]/bestvideo[height<=1080]+bestaudio/best[height<=1080]",
                 "outtmpl": out_tmpl,
-                "quiet": True,
+                "quiet": False,
                 "no_warnings": True,
+                "noplaylist": True,  # NO descargar playlist completa
+                "progress_hooks": [progress_hook],
+                "merge_output_format": "webm",
                 "postprocessors": [{
                     'key': 'FFmpegVideoConvertor',
                     'preferedformat': 'webm',
                 }],
             }
         else:
-            # Solo audio
+            # Solo audio (SOLO el video, no playlist)
             ydl_opts = {
-                "format": "bestaudio/best",
+                "format": "bestaudio[ext=webm]/bestaudio/best",
                 "outtmpl": out_tmpl,
-                "quiet": True,
+                "quiet": False,
                 "no_warnings": True,
+                "noplaylist": True,  # NO descargar playlist completa
+                "progress_hooks": [progress_hook],
             }
         
         # Si existe archivo de cookies, usarlo para evitar bloqueos de YouTube
@@ -190,7 +208,7 @@ async def download_audio(req: DownloadRequest):
                 detail="Archivo descargado no encontrado"
             )
         
-        logger.info(f"✓ Downloaded: {file_path.name}")
+        logger.info(f"Downloaded: {file_path.name}")
         
         return {
             "status": "ok",
@@ -241,7 +259,7 @@ async def transcribe_endpoint(req: TranscribeRequest):
     # Check cache
     cache_key = f"{req.file_name}_{req.language}"
     if cache_key in transcription_cache:
-        logger.info(f"✓ Usando transcripción en cache")
+        logger.info("Usando transcripcion en cache")
         return transcription_cache[cache_key]
     
     logger.info(f"Transcribing: {req.file_name}")
@@ -253,7 +271,7 @@ async def transcribe_endpoint(req: TranscribeRequest):
         # Cache result
         transcription_cache[cache_key] = result
         
-        logger.info(f"✓ Transcription completed: {len(result['text'])} chars")
+        logger.info(f"Transcription completed: {len(result['text'])} chars")
         return result
         
     except Exception as e:
@@ -269,7 +287,7 @@ async def translate_endpoint(req: TranslateRequest):
     if not req.text.strip():
         raise HTTPException(status_code=400, detail="Texto vacío")
     
-    logger.info(f"Translating: {req.source_lang} → {req.target_lang}")
+    logger.info(f"Translating: {req.source_lang} -> {req.target_lang}")
     
     try:
         with timer("Translation"):
@@ -279,7 +297,7 @@ async def translate_endpoint(req: TranslateRequest):
                 target_lang=req.target_lang,
             )
         
-        logger.info(f"✓ Translation completed")
+        logger.info("Translation completed")
         return result
         
     except Exception as e:
@@ -338,7 +356,7 @@ async def translate_transcript(req: TranslateTranscriptRequest):
             "target_lang": req.target_lang,
         }
         
-        logger.info(f"✓ Translation completed")
+        logger.info("Translation completed")
         return translation_cache[trans_cache_key]
         
     except Exception as e:
@@ -415,7 +433,7 @@ async def export_endpoint(req: ExportRequest):
         else:
             raise HTTPException(status_code=400, detail=f"Formato no soportado: {req.format}")
         
-        logger.info(f"✓ Exported: {output_path.name}")
+        logger.info(f"Exported: {output_path.name}")
         
         return {
             "status": "ok",
@@ -540,9 +558,9 @@ async def export_video_with_subtitles(req: VideoExportRequest):
                 final_video
             )
             
-            logger.info(f"✓ Video con TTS generado: {final_video}")
+            logger.info(f"Video con TTS generado: {final_video}")
         else:
-            logger.info(f"✓ Video con subtítulos generado: {final_video}")
+            logger.info(f"Video con subtitulos generado: {final_video}")
         
         return {
             "status": "ok",

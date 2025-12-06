@@ -48,7 +48,7 @@ def generate_srt_file(segments: List[Dict], output_path: Path, use_translation: 
     
     # Escribir archivo
     output_path.write_text("\n".join(srt_content), encoding="utf-8")
-    logger.info(f"✓ Archivo SRT generado: {output_path}")
+    logger.info(f"Archivo SRT generado: {output_path}")
     
     return output_path
 
@@ -123,7 +123,7 @@ def burn_subtitles_to_video(
         str(output_path)
     ]
     
-    logger.info(f"Quemando subtítulos en video...")
+    logger.info("Quemando subtitulos en video...")
     logger.info(f"Comando: {' '.join(cmd)}")
     
     try:
@@ -133,7 +133,7 @@ def burn_subtitles_to_video(
             text=True,
             check=True
         )
-        logger.info(f"✓ Subtítulos quemados exitosamente: {output_path}")
+        logger.info(f"Subtitulos quemados exitosamente: {output_path}")
         return output_path
     except subprocess.CalledProcessError as e:
         logger.error(f"Error en FFmpeg: {e.stderr}")
@@ -194,7 +194,7 @@ async def generate_tts_audio(
         if (i + 1) % 10 == 0:
             logger.info(f"  Procesado {i + 1}/{len(segments)} segmentos")
     
-    logger.info(f"✓ {len(segment_files)} segmentos de audio generados")
+    logger.info(f"{len(segment_files)} segmentos de audio generados")
     
     # Ahora necesitamos concatenar y sincronizar los audios
     # Esto requiere FFmpeg para crear silencios y concatenar
@@ -290,7 +290,7 @@ def replace_video_audio(
     
     try:
         subprocess.run(cmd, capture_output=True, text=True, check=True)
-        logger.info(f"✓ Audio reemplazado: {output_path}")
+        logger.info(f"Audio reemplazado: {output_path}")
         return output_path
     except subprocess.CalledProcessError as e:
         logger.error(f"Error reemplazando audio: {e.stderr}")
