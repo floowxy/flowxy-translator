@@ -3,8 +3,9 @@
 // Complete workflow: Download → Transcribe → Translate → Export
 // ============================================
 
-const API_PORT = 9000;  // Cambiado de 8000 para no interferir con Overleaf
-const API_BASE = `http://127.0.0.1:${API_PORT}`;
+// El frontend es servido por el propio backend FastAPI, así que las
+// rutas relativas siempre apuntan al servidor correcto (host y puerto).
+const API_BASE = "";
 
 // DOM Elements
 const elements = {
@@ -48,6 +49,7 @@ const elements = {
 
   // GPU & Log (opcional)
   gpuStats: document.getElementById("gpu-stats"),
+  footerGpu: document.getElementById("footerGpu"), // Puede ser null
   log: document.getElementById("logConsole"), // Puede ser null
   clearLogBtn: document.getElementById("clearLogBtn"), // Puede ser null
 };
@@ -110,6 +112,8 @@ function hideInfo(element) {
 // ============================================
 
 async function fetchGPUStats() {
+  let text;
+
   try {
     const resp = await fetch(`${API_BASE}/api/gpu-stats`);
     const data = await resp.json();
@@ -117,13 +121,18 @@ async function fetchGPUStats() {
     if (data.cuda && data.cuda.available) {
       const gpu = data.gpu;
       const memPercent = gpu.memory ? gpu.memory.percent : 0;
-      elements.gpuStats.textContent = `GPU: ${gpu.name || "Unknown"} | Memory: ${memPercent}%`;
+      text = `GPU: ${gpu.name || "Unknown"} | Memory: ${memPercent}%`;
     } else {
-      elements.gpuStats.textContent = "GPU: No disponible (usando CPU)";
+      text = "GPU: No disponible (usando CPU)";
     }
   } catch (error) {
-    elements.gpuStats.textContent = "GPU: Error";
+    text = "GPU: Error";
     log("Error obteniendo stats de GPU", "warning");
+  }
+
+  elements.gpuStats.textContent = text;
+  if (elements.footerGpu) {
+    elements.footerGpu.textContent = text;
   }
 }
 
@@ -156,9 +165,10 @@ async function downloadAudio(url, downloadVideo = false) {
       );
 
       // Cargar en el player apropiado
+      const encodedFileName = encodeURIComponent(data.file_name);
       const mediaUrl = data.media_type === "video"
-        ? `${API_BASE}/video/${data.file_name}`
-        : `${API_BASE}/audio/${data.file_name}`;
+        ? `${API_BASE}/video/${encodedFileName}`
+        : `${API_BASE}/audio/${encodedFileName}`;
 
       if (data.media_type === "video") {
         elements.videoPlayer.src = mediaUrl;
@@ -319,7 +329,7 @@ async function exportFile(fileName, format, useTranslation, bilingual) {
       log(`✓ Exportado: ${data.file_name}`, "success");
 
       // Descargar archivo
-      const downloadUrl = `${API_BASE}/api/export/${data.file_name}`;
+      const downloadUrl = `${API_BASE}/api/export/${encodeURIComponent(data.file_name)}`;
       const a = document.createElement("a");
       a.href = downloadUrl;
       a.download = data.file_name;
@@ -486,24 +496,24 @@ async function exportVideoWithSubtitles() {
   elements.exportProgressBar.style.width = "0%";
   elements.exportProgressText.textContent = "Iniciando exportación...";
 
-  try {
-    // Simular progreso (ya que el proceso es largo)
-    let progress = 0;
-    const progressInterval = setInterval(() => {
-      progress += 5;
-      if (progress <= 90) {
-        elements.exportProgressBar.style.width = `${progress}%`;
+  // Simular progreso (ya que el proceso es largo)
+  let progress = 0;
+  const progressInterval = setInterval(() => {
+    progress += 5;
+    if (progress <= 90) {
+      elements.exportProgressBar.style.width = `${progress}%`;
 
-        if (progress < 30) {
-          elements.exportProgressText.textContent = "Generando archivo SRT...";
-        } else if (progress < 60) {
-          elements.exportProgressText.textContent = "Quemando subtítulos en video...";
-        } else if (includeTts && progress < 90) {
-          elements.exportProgressText.textContent = "Generando audio TTS...";
-        }
+      if (progress < 30) {
+        elements.exportProgressText.textContent = "Generando archivo SRT...";
+      } else if (progress < 60) {
+        elements.exportProgressText.textContent = "Quemando subtítulos en video...";
+      } else if (includeTts && progress < 90) {
+        elements.exportProgressText.textContent = "Generando audio TTS...";
       }
-    }, 1000);
+    }
+  }, 1000);
 
+  try {
     const resp = await fetch(`${API_BASE}/api/export-video`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -549,6 +559,7 @@ async function exportVideoWithSubtitles() {
       throw new Error(data.detail || "Error exportando video");
     }
   } catch (error) {
+    clearInterval(progressInterval);
     log(`Error: ${error.message}`, "error");
     showInfo(elements.exportVideoInfo, `Error: ${error.message}`, "error");
     elements.exportVideoProgress.classList.add("hidden");

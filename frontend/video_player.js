@@ -1,8 +1,9 @@
 // Video Player with Real-time Subtitles - OPTIMIZED
 // Flowxy-Translator
 
-const API_PORT = 9000;
-const API_BASE = `http://127.0.0.1:${API_PORT}`;
+// El frontend es servido por el propio backend FastAPI, así que las
+// rutas relativas siempre apuntan al servidor correcto (host y puerto).
+const API_BASE = "";
 
 let currentSegments = [];
 let currentVideo = null;
@@ -73,7 +74,7 @@ async function loadVideo(fileName) {
         showStatus('Cargando video...');
 
         const video = document.getElementById('videoPlayer');
-        video.src = `${API_BASE}/video/${fileName}`;
+        video.src = `${API_BASE}/video/${encodeURIComponent(fileName)}`;
         currentVideo = fileName;
 
         // Load subtitles from new API endpoint
@@ -89,11 +90,10 @@ async function loadSubtitles(fileName) {
     try {
         showStatus('Cargando subtítulos...');
 
-        // Get base name without extension
-        const baseName = fileName.replace(/\.[^/.]+$/, "");
-
-        // Load from new subtitle API
-        const response = await fetch(`${API_BASE}/api/subtitles/${baseName}`);
+        // El backend cachea la transcripción con el nombre de archivo completo
+        // (incluyendo extensión) como prefijo de la clave, así que se debe
+        // usar el mismo nombre aquí para que coincida.
+        const response = await fetch(`${API_BASE}/api/subtitles/${encodeURIComponent(fileName)}`);
 
         if (response.ok) {
             const data = await response.json();
