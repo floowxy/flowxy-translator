@@ -24,14 +24,18 @@ COLORS = {
 
 class ColoredFormatter(logging.Formatter):
     """Formatter con colores para consola"""
-    
+
     def format(self, record):
-        # Agregar color
-        levelname = record.levelname
-        if levelname in COLORS:
-            record.levelname = f"{COLORS[levelname]}{levelname}{COLORS['RESET']}"
-        
-        return super().format(record)
+        # Agregar color sin mutar permanentemente el record
+        # (otros handlers, como el de archivo, también lo formatean)
+        original_levelname = record.levelname
+        if original_levelname in COLORS:
+            record.levelname = f"{COLORS[original_levelname]}{original_levelname}{COLORS['RESET']}"
+
+        try:
+            return super().format(record)
+        finally:
+            record.levelname = original_levelname
 
 
 def setup_logger(

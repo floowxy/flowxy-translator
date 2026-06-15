@@ -130,7 +130,10 @@ SERVER_PORT = 9000  # Cambiado de 8000 para no interferir con Overleaf
 SERVER_RELOAD = True  # Solo en desarrollo
 
 # CORS
-CORS_ORIGINS = ["*"]  # En producción: lista específica
+# El frontend se sirve desde el mismo origen (FastAPI), por lo que no se
+# necesita acceso cross-origin. Se deja vacío por seguridad, ya que
+# SERVER_HOST="0.0.0.0" expone el servidor a la red local.
+CORS_ORIGINS = []
 
 # ============================================
 # LOGGING

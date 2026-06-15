@@ -49,7 +49,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -106,6 +106,17 @@ translation_cache = {}
 
 
 # ============================================
+# UTILIDADES
+# ============================================
+def _safe_filename(file_name: str) -> str:
+    """Evita path traversal: solo acepta nombres de archivo simples (sin / ni ..)."""
+    safe_name = Path(file_name).name
+    if not safe_name or safe_name in (".", "..") or safe_name != file_name:
+        raise HTTPException(status_code=400, detail="Nombre de archivo inválido")
+    return safe_name
+
+
+# ============================================
 # ENDPOINTS
 # ============================================
 
@@ -147,7 +158,11 @@ async def download_audio(req: DownloadRequest):
     logger.info(f"Download request: {req.url} (video={req.download_video})")
     
     try:
-        out_tmpl = str(DOWNLOADS_DIR / "%(id)s.%(ext)s")
+        # Sufijo según tipo para no colisionar entre descarga de solo-audio
+        # y video completo del mismo video (si no, yt-dlp ve "{id}.webm" ya
+        # existente de un tipo y omite la descarga del otro tipo).
+        suffix = "video" if req.download_video else "audio"
+        out_tmpl = str(DOWNLOADS_DIR / f"%(id)s_{suffix}.%(ext)s")
     
         # Progress hook para logging
         def progress_hook(d):
@@ -227,22 +242,22 @@ async def download_audio(req: DownloadRequest):
 @app.get("/audio/{file_name}")
 async def get_audio(file_name: str):
     """Sirve archivo de audio descargado"""
-    file_path = DOWNLOADS_DIR / file_name
-    
+    file_path = DOWNLOADS_DIR / _safe_filename(file_name)
+
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
-    
+
     return FileResponse(file_path)
 
 
 @app.get("/video/{file_name}")
 async def get_video(file_name: str):
     """Sirve archivo de video descargado"""
-    file_path = DOWNLOADS_DIR / file_name
-    
+    file_path = DOWNLOADS_DIR / _safe_filename(file_name)
+
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
-    
+
     return FileResponse(file_path, media_type="video/webm")
 
 
@@ -251,18 +266,19 @@ async def transcribe_endpoint(req: TranscribeRequest):
     """
     Transcribe archivo de audio usando Whisper (GPU)
     """
-    file_path = DOWNLOADS_DIR / req.file_name
-    
+    file_name = _safe_filename(req.file_name)
+    file_path = DOWNLOADS_DIR / file_name
+
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
-    
+
     # Check cache
-    cache_key = f"{req.file_name}_{req.language}"
+    cache_key = f"{file_name}_{req.language}"
     if cache_key in transcription_cache:
         logger.info("Usando transcripcion en cache")
         return transcription_cache[cache_key]
-    
-    logger.info(f"Transcribing: {req.file_name}")
+
+    logger.info(f"Transcribing: {file_name}")
     
     try:
         with timer("Transcription"):
@@ -310,16 +326,18 @@ async def translate_transcript(req: TranslateTranscriptRequest):
     """
     Traduce una transcripción completa (por segmentos)
     """
+    file_name = _safe_filename(req.file_name)
+
     # Buscar transcripción en cache (puede tener cualquier idioma)
     transcription = None
     cache_key = None
-    
-    # Buscar por nombre de archivo (con cualquier idioma)
+
+    # Buscar por nombre de archivo (con cualquier idioma).
+    # Si hay varias (re-transcripciones), usar la más reciente.
     for key in transcription_cache:
-        if key.startswith(req.file_name + "_"):
+        if key.startswith(file_name + "_"):
             cache_key = key
             transcription = transcription_cache[key]
-            break
     
     if not transcription:
         raise HTTPException(
@@ -347,7 +365,7 @@ async def translate_transcript(req: TranslateTranscriptRequest):
         )
         
         # Cache result
-        trans_cache_key = f"{req.file_name}_{req.target_lang}"
+        trans_cache_key = f"{file_name}_{req.target_lang}"
         translation_cache[trans_cache_key] = {
             "status": "ok",
             "segments": translated_segments,
@@ -369,32 +387,34 @@ async def export_endpoint(req: ExportRequest):
     """
     Exporta transcripción/traducción en formato especificado
     """
-    # Obtener datos
-    cache_key = f"{req.file_name}_None"
-    
-    if cache_key not in transcription_cache:
+    file_name = _safe_filename(req.file_name)
+
+    # Obtener transcripción (cacheada como "{file_name}_{language}",
+    # donde language puede ser "None" o el idioma elegido por el usuario)
+    transcription = None
+    for key in transcription_cache:
+        if key.startswith(file_name + "_"):
+            transcription = transcription_cache[key]
+
+    if transcription is None:
         raise HTTPException(
             status_code=404,
             detail="Transcripción no encontrada"
         )
-    
-    transcription = transcription_cache[cache_key]
+
     segments = transcription.get("segments", [])
-    
-    # Si usa traducción, obtenerla
+
+    # Si usa traducción, obtenerla (la más reciente si hay varias)
+    translation = None
     if req.use_translation:
-        trans_key = None
         for key in translation_cache:
-            if key.startswith(req.file_name):
-                trans_key = key
-                break
-        
-        if trans_key:
-            translation = translation_cache[trans_key]
+            if key.startswith(file_name + "_"):
+                translation = translation_cache[key]
+        if translation:
             segments = translation.get("segments", segments)
-    
+
     # Nombre base de archivo
-    base_name = Path(req.file_name).stem
+    base_name = Path(file_name).stem
     output_path = EXPORTS_DIR / f"{base_name}.{req.format}"
     
     try:
@@ -412,12 +432,14 @@ async def export_endpoint(req: ExportRequest):
         
         elif req.format == "txt":
             text = transcription.get("text", "")
-            if req.use_translation and "translated_text" in translation:
+            if req.use_translation and translation and "translated_text" in translation:
                 if req.bilingual:
                     export_bilingual_txt(
                         text,
                         translation.get("translated_text", ""),
                         output_path,
+                        source_lang=translation.get("source_lang", "en"),
+                        target_lang=translation.get("target_lang", "es"),
                     )
                 else:
                     export_txt(translation.get("translated_text", ""), output_path)
@@ -426,7 +448,7 @@ async def export_endpoint(req: ExportRequest):
         
         elif req.format == "json":
             data = {**transcription}
-            if req.use_translation:
+            if req.use_translation and translation:
                 data["translation"] = translation
             export_json(data, output_path)
         
@@ -450,12 +472,13 @@ async def export_endpoint(req: ExportRequest):
 @app.get("/api/export/{file_name}")
 async def download_export(file_name: str):
     """Descarga archivo exportado"""
-    file_path = EXPORTS_DIR / file_name
-    
+    safe_name = _safe_filename(file_name)
+    file_path = EXPORTS_DIR / safe_name
+
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
-    
-    return FileResponse(file_path, filename=file_name)
+
+    return FileResponse(file_path, filename=safe_name)
 
 
 # ============================================================
@@ -479,37 +502,37 @@ async def export_video_with_subtitles(req: VideoExportRequest):
         replace_video_audio
     )
     
-    logger.info(f"Exportando video: {req.file_name} (TTS: {req.include_tts})")
-    
+    file_name = _safe_filename(req.file_name)
+
+    logger.info(f"Exportando video: {file_name} (TTS: {req.include_tts})")
+
     # Buscar transcripción y traducción en cache
     transcription = None
     translation = None
-    
+
     for key in transcription_cache:
-        if key.startswith(req.file_name + "_"):
+        if key.startswith(file_name + "_"):
             transcription = transcription_cache[key]
-            break
-    
+
     if not transcription:
         raise HTTPException(
             status_code=404,
             detail="Transcripción no encontrada. Transcribe primero."
         )
-    
-    # Buscar traducción
+
+    # Buscar traducción (la más reciente si hay varias)
     for key in translation_cache:
-        if key.startswith(req.file_name):
+        if key.startswith(file_name + "_"):
             translation = translation_cache[key]
-            break
-    
+
     if not translation:
         raise HTTPException(
             status_code=404,
             detail="Traducción no encontrada. Traduce primero."
         )
-    
+
     # Paths
-    video_path = DOWNLOADS_DIR / req.file_name
+    video_path = DOWNLOADS_DIR / file_name
     if not video_path.exists():
         raise HTTPException(status_code=404, detail="Video no encontrado")
     
@@ -579,32 +602,33 @@ async def export_video_with_subtitles(req: VideoExportRequest):
 # ============================================================
 # Subtítulos en Tiempo Real
 # ============================================================
+@app.get("/api/subtitles/{file_name}")
 async def get_subtitles(file_name: str):
     """
     Obtiene subtítulos para el video player
     Retorna segmentos con timestamps y texto original/traducido
     """
+    file_name = _safe_filename(file_name)
+
     # Buscar transcripción en cache
     transcription = None
     for key in transcription_cache:
         if key.startswith(file_name + "_"):
             transcription = transcription_cache[key]
-            break
-    
+
     if not transcription:
         raise HTTPException(
             status_code=404,
             detail="Subtítulos no encontrados. Transcribe el video primero."
         )
-    
+
     segments = transcription.get("segments", [])
-    
-    # Buscar traducción si existe
+
+    # Buscar traducción si existe (la más reciente si hay varias)
     translation = None
     for key in translation_cache:
         if key.startswith(file_name + "_"):
             translation = translation_cache[key]
-            break
     
     # Combinar transcripción y traducción
     result_segments = []
