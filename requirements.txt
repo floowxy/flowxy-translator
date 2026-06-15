@@ -19,7 +19,6 @@ edge-tts==7.2.3
 fastapi==0.109.0
 filelock==3.20.0
 flatbuffers==25.9.23
--e git+https://github.com/floowxy/flowxy-translator.git@9575b809deed5bc1a0ab7795ab0bf932cd71ef7e#egg=flowxy_translator
 frozenlist==1.8.0
 fsspec==2025.12.0
 h11==0.16.0
@@ -82,7 +81,7 @@ resampy==0.4.2
 safetensors==0.7.0
 scikit-learn==1.7.2
 scipy==1.16.3
-sentencepiece==0.1.99
+sentencepiece==0.2.0
 six==1.17.0
 soundfile==0.12.1
 soxr==1.0.0
@@ -104,4 +103,4 @@ uvloop==0.22.1
 watchfiles==1.1.1
 websockets==12.0
 yarl==1.22.0
-yt-dlp==2025.11.12
+yt-dlp==2026.6.9
