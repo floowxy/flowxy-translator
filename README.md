@@ -358,8 +358,8 @@ Edita `backend/config.py`:
 ```python
 SERVER_HOST = "0.0.0.0"
 SERVER_PORT = 9000
-WHISPER_MODEL = "base"  # tiny, base, small, medium, large
-NLLB_MODEL = "nllb-200-distilled-600M"
+WHISPER_MODEL_SIZE = "base"  # tiny, base, small, medium, large-v2, large-v3
+NLLB_MODEL_SIZE = "1.3B"     # "600M" o "1.3B"
 ```
 
 ## 🎨 Características del Video Exportado
