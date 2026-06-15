@@ -45,8 +45,8 @@ WHISPER_MODEL_DIR = MODELS_DIR / "whisper"
 WHISPER_MODEL_DIR.mkdir(exist_ok=True, parents=True)
 
 # Modelo: "tiny", "base", "small", "medium", "large-v2", "large-v3"
-# Para GPU RTX 4060 Ti: base es más rápido y usa menos memoria
-WHISPER_MODEL_SIZE = "base"
+# "medium" (~5GB VRAM) + NLLB 1.3B (~2.6GB) caben en una RTX 4060 Ti 8GB
+WHISPER_MODEL_SIZE = "medium"
 
 # Parámetros de transcripción
 WHISPER_BEAM_SIZE = 5

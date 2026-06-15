@@ -14,6 +14,8 @@ from backend.config import (
     WHISPER_MODEL_SIZE,
     WHISPER_LANGUAGE,
     WHISPER_TASK,
+    WHISPER_BEAM_SIZE,
+    WHISPER_BEST_OF,
     get_device,
 )
 
@@ -21,35 +23,66 @@ logger = logging.getLogger(__name__)
 
 
 @lru_cache(maxsize=1)
-def get_whisper_model():
+def _load_whisper_model():
     """
-    Obtiene o carga el modelo Whisper (cached)
-    
-    Returns:
-        Modelo Whisper de OpenAI
+    Carga el modelo Whisper en CPU (cached, una sola vez por proceso).
+
+    Se carga en CPU y luego se mueve a GPU on-demand desde
+    get_whisper_model(), para poder liberar la VRAM cuando no se usa
+    (ver offload_whisper_model).
     """
     try:
-        device = get_device()
-        logger.info(f"Cargando Whisper {WHISPER_MODEL_SIZE} en {device}")
-        
+        logger.info(f"Cargando Whisper {WHISPER_MODEL_SIZE} (cpu)")
+
         # Crear directorio de modelos si no existe
         WHISPER_MODEL_DIR.mkdir(exist_ok=True, parents=True)
-        
-        # Cargar modelo
+
         model = whisper.load_model(
             WHISPER_MODEL_SIZE,
-            device=device,
+            device="cpu",
             download_root=str(WHISPER_MODEL_DIR),
         )
-        
+
         logger.info(f"✓ Modelo Whisper cargado: {WHISPER_MODEL_SIZE}")
-        logger.info(f"✓ Device: {device}")
-        
         return model
-        
+
     except Exception as e:
         logger.error(f"Error cargando modelo Whisper: {e}")
         raise
+
+
+def get_whisper_model():
+    """
+    Obtiene el modelo Whisper listo para usar en el device configurado.
+
+    Whisper y NLLB no se usan simultáneamente, así que antes de mover
+    Whisper a GPU se libera la VRAM ocupada por NLLB (si estaba cargado).
+    """
+    model = _load_whisper_model()
+    device = get_device()
+
+    if device == "cuda" and next(model.parameters()).device.type != "cuda":
+        from backend.translation.nllb_engine import offload_nllb_model
+        offload_nllb_model()
+
+        logger.info(f"Moviendo Whisper {WHISPER_MODEL_SIZE} a {device}")
+        model = model.to(device)
+        torch.cuda.empty_cache()
+        logger.info(f"✓ Device: {device}")
+
+    return model
+
+
+def offload_whisper_model():
+    """Mueve el modelo Whisper a CPU para liberar VRAM (si está cargado)."""
+    if _load_whisper_model.cache_info().currsize == 0:
+        return
+
+    model = _load_whisper_model()
+    if next(model.parameters()).device.type != "cpu":
+        logger.info("Liberando VRAM: moviendo Whisper a CPU")
+        model.to("cpu")
+        torch.cuda.empty_cache()
 
 
 def transcribe_file(
@@ -97,6 +130,8 @@ def transcribe_file(
             task=task,
             verbose=False,
             fp16=torch.cuda.is_available(),  # Usar FP16 en GPU
+            beam_size=WHISPER_BEAM_SIZE,
+            best_of=WHISPER_BEST_OF,
         )
         
         # Procesar segmentos
@@ -168,6 +203,8 @@ def transcribe_array(
             task=WHISPER_TASK,
             verbose=False,
             fp16=torch.cuda.is_available(),
+            beam_size=WHISPER_BEAM_SIZE,
+            best_of=WHISPER_BEST_OF,
         )
         
         segments = []
