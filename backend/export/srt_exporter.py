@@ -28,35 +28,68 @@ def format_srt_timestamp(seconds: float) -> str:
 
 def wrap_text(text: str, max_chars: int = 42, max_lines: int = 2) -> List[str]:
     """
-    Divide texto en líneas que caben en subtítulo
-    
-    Args:
-        text: Texto a dividir
-        max_chars: Caracteres máximos por línea
-        max_lines: Líneas máximas
-        
-    Returns:
-        Lista de líneas
+    Divide texto en líneas para subtítulo.
+
+    Nunca descarta contenido: si el texto excede max_lines, el overflow
+    se añade al final de la última línea (largo pero visible) en lugar de
+    desaparecer silenciosamente.
     """
     words = text.split()
-    lines = []
+    lines: List[str] = []
     current_line = ""
-    
+
     for word in words:
-        if len(current_line) + len(word) + 1 <= max_chars:
+        if not current_line or len(current_line) + len(word) + 1 <= max_chars:
             current_line += word + " "
         else:
-            if current_line:
-                lines.append(current_line.strip())
+            lines.append(current_line.strip())
             current_line = word + " "
-            
-            if len(lines) >= max_lines:
-                break
-    
-    if current_line.strip() and len(lines) < max_lines:
+
+    if current_line.strip():
         lines.append(current_line.strip())
-    
+
+    if not lines:
+        return []
+
+    # Si hay más líneas de las permitidas, colapsar el overflow en la última
+    if len(lines) > max_lines:
+        overflow = " ".join(lines[max_lines:])
+        lines = lines[:max_lines]
+        lines[-1] = f"{lines[-1]} {overflow}"
+
     return lines
+
+
+def consolidate_segments(segments: List[Dict[str, Any]], use_translation: bool = True) -> List[Dict[str, Any]]:
+    """
+    Fusiona segmentos consecutivos que tienen el mismo texto de subtítulo.
+
+    El DP grouper asigna la misma translated_text a todos los segmentos de un
+    grupo. Sin consolidar, el SRT tiene N entradas idénticas que hacen parpadear
+    el subtítulo en cada límite de segmento. Con consolidar, queda una sola
+    entrada que abarca todo el tiempo del grupo — aparece cuando empieza la
+    oración y desaparece cuando termina.
+    """
+    if not segments:
+        return []
+
+    def _text(seg: Dict) -> str:
+        if use_translation and seg.get("translated_text"):
+            return seg["translated_text"].strip()
+        return seg.get("text", "").strip()
+
+    result: List[Dict] = []
+    current = dict(segments[0])
+
+    for seg in segments[1:]:
+        if _text(seg) == _text(current):
+            current["end"] = seg["end"]  # extender el rango temporal
+        else:
+            result.append(current)
+            current = dict(seg)
+
+    result.append(current)
+    return result
 
 
 def create_srt(
@@ -65,51 +98,42 @@ def create_srt(
     use_translation: bool = False,
     max_chars_per_line: int = 42,
     max_lines: int = 2,
+    consolidate: bool = False,
 ) -> Path:
     """
-    Crea archivo SRT de subtítulos
-    
-    Args:
-        segments: Lista de segmentos con start, end, text
-        output_path: Path del archivo de salida
-        use_translation: Si usar traducción en lugar de texto original
-        max_chars_per_line: Máximo de caracteres por línea
-        max_lines: Máximo de líneas por subtítulo
-        
-    Returns:
-        Path al archivo creado
+    Crea archivo SRT de subtítulos.
+
+    consolidate=True: fusiona segmentos consecutivos con el mismo texto antes
+    de escribir. Recomendado para video quemado cuando se usa el DP grouper.
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    
+
+    segs = consolidate_segments(segments, use_translation) if consolidate else segments
+
     with open(output_path, "w", encoding="utf-8") as f:
-        for i, segment in enumerate(segments, 1):
+        counter = 1
+        for segment in segs:
             start = segment.get("start", 0.0)
             end = segment.get("end", 0.0)
-            
-            # Texto a usar
+
             if use_translation and "translated_text" in segment:
                 text = segment["translated_text"]
             else:
                 text = segment.get("text", "")
-            
+
             if not text.strip():
                 continue
-            
-            # Formatear timestamps
-            start_time = format_srt_timestamp(start)
-            end_time = format_srt_timestamp(end)
-            
-            # Wrap texto
+
             lines = wrap_text(text, max_chars_per_line, max_lines)
             text_content = "\n".join(lines)
-            
-            # Escribir subtítulo
-            f.write(f"{i}\n")
-            f.write(f"{start_time} --> {end_time}\n")
+
+            f.write(f"{counter}\n")
+            f.write(f"{format_srt_timestamp(start)} --> {format_srt_timestamp(end)}\n")
             f.write(f"{text_content}\n")
             f.write("\n")
-    
-    logger.info(f"Archivo SRT creado: {output_path}")
+            counter += 1
+
+    logger.info(f"Archivo SRT creado: {output_path} ({counter - 1} entradas)")
     return output_path
 
 
