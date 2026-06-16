@@ -4,6 +4,7 @@ Genera videos con subtítulos quemados y audio TTS opcional
 """
 
 import asyncio
+import shlex
 import subprocess
 from pathlib import Path
 from typing import List, Dict, Optional
@@ -95,10 +96,11 @@ def burn_subtitles_to_video(
             "alignment": 2,  # Abajo centro
         }
     
-    # Construir filtro de subtítulos
-    # Usar formato ASS para mejor control de estilo
+    # Escapar el path del SRT para el filtergraph de FFmpeg:
+    # los dos puntos y las comillas simples son metacaracteres en este contexto.
+    srt_escaped = str(srt_path).replace("\\", "/").replace("'", "\\'").replace(":", "\\:")
     subtitle_filter = (
-        f"subtitles={srt_path}:force_style='"
+        f"subtitles='{srt_escaped}':force_style='"
         f"FontName={subtitle_style['font']},"
         f"FontSize={subtitle_style['font_size']},"
         f"PrimaryColour={subtitle_style['primary_color']},"
@@ -238,23 +240,23 @@ async def merge_tts_segments(segment_files: List[Dict], output_path: Path):
         "-i", str(concat_file),
         "-c", "copy",
         "-y",
-        str(output_path)
+        str(output_path),
     ]
-    
-    subprocess.run(cmd, capture_output=True, check=True)
-    concat_file.unlink()  # Limpiar
+
+    await asyncio.to_thread(subprocess.run, cmd, capture_output=True, check=True)
+    concat_file.unlink()
 
 
-async def generate_silence(output_path: Path, duration: float):
-    """Genera un archivo de audio silencioso"""
+async def generate_silence(output_path: Path, duration: float) -> None:
+    """Genera un archivo de audio silencioso sin bloquear el event loop."""
     cmd = [
         "ffmpeg",
         "-f", "lavfi",
         "-i", f"anullsrc=r=44100:cl=stereo:d={duration}",
         "-y",
-        str(output_path)
+        str(output_path),
     ]
-    subprocess.run(cmd, capture_output=True, check=True)
+    await asyncio.to_thread(subprocess.run, cmd, capture_output=True, check=True)
 
 
 def replace_video_audio(

@@ -3,9 +3,12 @@ Whisper Engine - Motor de transcripción GPU-optimizado con OpenAI Whisper
 Optimizado para RTX 4060 Ti usando PyTorch + CUDA
 """
 import logging
+import subprocess
+import threading
+import time
 from pathlib import Path
 from functools import lru_cache
-from typing import Dict, Any, List, Optional
+from typing import Callable, Dict, Any, List, Optional
 import torch
 import whisper
 
@@ -73,6 +76,23 @@ def get_whisper_model():
     return model
 
 
+def _get_audio_duration(audio_path: Path) -> float:
+    """Duración del archivo con ffprobe. Rápido y soporta todos los formatos."""
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "csv=p=0",
+                str(audio_path),
+            ],
+            capture_output=True, text=True, timeout=10,
+        )
+        return float(result.stdout.strip())
+    except Exception:
+        return 0.0
+
+
 def offload_whisper_model():
     """Mueve el modelo Whisper a CPU para liberar VRAM (si está cargado)."""
     if _load_whisper_model.cache_info().currsize == 0:
@@ -89,6 +109,7 @@ def transcribe_file(
     audio_path: Path,
     language: Optional[str] = None,
     task: str = "transcribe",
+    progress_callback: Optional[Callable[[float], None]] = None,
     **kwargs
 ) -> Dict[str, Any]:
     """
@@ -111,15 +132,31 @@ def transcribe_file(
     """
     if not audio_path.exists():
         raise FileNotFoundError(f"Archivo no existe: {audio_path}")
-    
-    # Valores por defecto
+
     if language is None:
         language = WHISPER_LANGUAGE
-    
+
     logger.info(f"Transcribiendo: {audio_path.name}")
     logger.info(f"  Language: {language or 'auto-detect'}")
     logger.info(f"  Task: {task}")
-    
+
+    # Progreso estimado basado en duración y velocidad del modelo
+    stop_event = threading.Event()
+    if progress_callback:
+        duration = _get_audio_duration(audio_path)
+        if duration > 0:
+            # medium en RTX 4060 Ti ≈ 8x realtime; en CPU ≈ 0.5x
+            speed = 8.0 if torch.cuda.is_available() else 0.5
+            start_t = time.time()
+
+            def _track_progress() -> None:
+                while not stop_event.is_set():
+                    elapsed = time.time() - start_t
+                    progress_callback(min(0.92, elapsed * speed / duration))
+                    stop_event.wait(0.4)
+
+            threading.Thread(target=_track_progress, daemon=True).start()
+
     try:
         model = get_whisper_model()
         
@@ -154,7 +191,7 @@ def transcribe_file(
         logger.info(f"  Idioma detectado: {detected_language}")
         logger.info(f"  Segmentos: {len(segments)}")
         logger.info(f"  Caracteres: {len(full_text)}")
-        
+
         return {
             "status": "ok",
             "text": full_text,
@@ -162,10 +199,14 @@ def transcribe_file(
             "language": detected_language,
             "duration": round(segments[-1]["end"], 2) if segments else 0.0,
         }
-        
+
     except Exception as e:
         logger.error(f"Error en transcripción: {e}")
         raise
+    finally:
+        stop_event.set()
+        if progress_callback:
+            progress_callback(1.0)
 
 
 def transcribe_array(

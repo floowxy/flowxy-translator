@@ -2,7 +2,10 @@
 Main FastAPI Server - Flowxy-Translator
 Backend completo con GPU optimization
 """
+import asyncio
+import json
 import logging
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -70,6 +73,7 @@ class DownloadRequest(BaseModel):
 class TranscribeRequest(BaseModel):
     file_name: str
     language: Optional[str] = None
+    task_id: Optional[str] = None  # Frontend genera el UUID para polling de progreso
 
 
 class TranslateRequest(BaseModel):
@@ -81,6 +85,7 @@ class TranslateRequest(BaseModel):
 class TranslateTranscriptRequest(BaseModel):
     file_name: str
     target_lang: str = "es"
+    task_id: Optional[str] = None  # Frontend genera el UUID para polling de progreso
 
 
 class ExportRequest(BaseModel):
@@ -98,11 +103,39 @@ class VideoExportRequest(BaseModel):
 
 
 # ============================================================
-# Cache Global
+# Cache Global + Progreso de tareas
 # ============================================================
-# Cache simple de transcripciones y traducciones
-transcription_cache = {}
-translation_cache = {}
+transcription_cache: dict = {}
+translation_cache: dict = {}
+
+# Progreso de tareas en curso: task_id -> float (0.0 - 1.0)
+_task_progress: dict[str, float] = {}
+
+
+# ── Helpers de persistencia en disco ────────────────────────────────
+
+def _transcription_cache_path(file_name: str) -> Path:
+    return DOWNLOADS_DIR / f"{Path(file_name).stem}_transcription.json"
+
+
+def _translation_cache_path(file_name: str, lang: str) -> Path:
+    return DOWNLOADS_DIR / f"{Path(file_name).stem}_translation_{lang}.json"
+
+
+def _save_to_disk(path: Path, data: dict) -> None:
+    try:
+        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    except Exception as e:
+        logger.warning(f"No se pudo persistir caché en disco: {e}")
+
+
+def _load_from_disk(path: Path) -> dict | None:
+    try:
+        if path.exists():
+            return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.warning(f"No se pudo leer caché del disco: {e}")
+    return None
 
 
 # ============================================
@@ -139,6 +172,12 @@ async def health():
         "status": "ok",
         "version": "1.0.0",
     }
+
+
+@app.get("/api/progress/{task_id}")
+async def get_task_progress(task_id: str):
+    """Progreso de una tarea en curso (0.0–1.0). Retorna -1 si no existe."""
+    return {"task_id": task_id, "progress": _task_progress.get(task_id, -1.0)}
 
 
 @app.get("/api/gpu-stats")
@@ -263,36 +302,54 @@ async def get_video(file_name: str):
 
 @app.post("/api/transcribe")
 async def transcribe_endpoint(req: TranscribeRequest):
-    """
-    Transcribe archivo de audio usando Whisper (GPU)
-    """
+    """Transcribe archivo de audio usando Whisper (GPU). No bloquea el event loop."""
     file_name = _safe_filename(req.file_name)
     file_path = DOWNLOADS_DIR / file_name
 
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
 
-    # Check cache
     cache_key = f"{file_name}_{req.language}"
+
+    # 1. Caché en memoria
     if cache_key in transcription_cache:
-        logger.info("Usando transcripcion en cache")
+        logger.info("Transcripción en caché (memoria)")
         return transcription_cache[cache_key]
 
-    logger.info(f"Transcribing: {file_name}")
-    
+    # 2. Caché en disco — sobrevive reloads del servidor
+    cached = _load_from_disk(_transcription_cache_path(file_name))
+    if cached:
+        logger.info("Transcripción en caché (disco)")
+        transcription_cache[cache_key] = cached
+        return cached
+
+    # 3. Transcribir
+    task_id = req.task_id or str(uuid.uuid4())
+    _task_progress[task_id] = 0.0
+
+    def _progress(p: float) -> None:
+        _task_progress[task_id] = p
+
+    logger.info(f"Transcribiendo: {file_name}")
     try:
         with timer("Transcription"):
-            result = transcribe_file(file_path, language=req.language)
-        
-        # Cache result
+            result = await asyncio.to_thread(
+                transcribe_file, file_path, language=req.language,
+                progress_callback=_progress,
+            )
+
+        _task_progress[task_id] = 1.0
         transcription_cache[cache_key] = result
-        
-        logger.info(f"Transcription completed: {len(result['text'])} chars")
+        _save_to_disk(_transcription_cache_path(file_name), result)
+
+        logger.info(f"Transcripción completada: {len(result['text'])} chars")
         return result
-        
+
     except Exception as e:
         logger.error(f"Error transcribiendo: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        _task_progress.pop(task_id, None)
 
 
 @app.post("/api/translate")
@@ -323,63 +380,82 @@ async def translate_endpoint(req: TranslateRequest):
 
 @app.post("/api/translate-transcript")
 async def translate_transcript(req: TranslateTranscriptRequest):
-    """
-    Traduce una transcripción completa (por segmentos)
-    """
+    """Traduce una transcripción completa por segmentos. No bloquea el event loop."""
     file_name = _safe_filename(req.file_name)
 
-    # Buscar transcripción en cache (puede tener cualquier idioma)
+    # 1. Caché en memoria (busca cualquier transcripción del archivo)
     transcription = None
-    cache_key = None
-
-    # Buscar por nombre de archivo (con cualquier idioma).
-    # Si hay varias (re-transcripciones), usar la más reciente.
     for key in transcription_cache:
         if key.startswith(file_name + "_"):
-            cache_key = key
             transcription = transcription_cache[key]
-    
+
+    # 2. Caché en disco si no está en memoria
+    if not transcription:
+        transcription = _load_from_disk(_transcription_cache_path(file_name))
+
     if not transcription:
         raise HTTPException(
             status_code=404,
             detail="Transcripción no encontrada. Transcribe primero."
         )
-    
+
     segments = transcription.get("segments", [])
     source_lang = transcription.get("language", "en")
-    
-    logger.info(f"Translating transcript: {len(segments)} segments")
-    
+
+    # 3. Caché de traducción en memoria
+    trans_cache_key = f"{file_name}_{req.target_lang}"
+    if trans_cache_key in translation_cache:
+        logger.info("Traducción en caché (memoria)")
+        return translation_cache[trans_cache_key]
+
+    # 4. Caché de traducción en disco
+    cached = _load_from_disk(_translation_cache_path(file_name, req.target_lang))
+    if cached:
+        logger.info("Traducción en caché (disco)")
+        translation_cache[trans_cache_key] = cached
+        return cached
+
+    # 5. Traducir
+    task_id = req.task_id or str(uuid.uuid4())
+    _task_progress[task_id] = 0.0
+
+    def _progress(p: float) -> None:
+        _task_progress[task_id] = p
+
+    logger.info(f"Traduciendo {len(segments)} segmentos: {source_lang} → {req.target_lang}")
     try:
         with timer("Translate segments"):
-            translated_segments = translate_segments(
+            translated_segments = await asyncio.to_thread(
+                translate_segments,
                 segments,
                 source_lang=source_lang,
                 target_lang=req.target_lang,
+                progress_callback=_progress,
             )
-        
-        # Texto completo traducido
+
+        _task_progress[task_id] = 1.0
         translated_text = " ".join(
-            seg.get("translated_text", "")
-            for seg in translated_segments
+            seg.get("translated_text", "") for seg in translated_segments
         )
-        
-        # Cache result
-        trans_cache_key = f"{file_name}_{req.target_lang}"
-        translation_cache[trans_cache_key] = {
+
+        result = {
             "status": "ok",
             "segments": translated_segments,
             "translated_text": translated_text,
             "source_lang": source_lang,
             "target_lang": req.target_lang,
         }
-        
-        logger.info("Translation completed")
-        return translation_cache[trans_cache_key]
-        
+        translation_cache[trans_cache_key] = result
+        _save_to_disk(_translation_cache_path(file_name, req.target_lang), result)
+
+        logger.info("Traducción completada")
+        return result
+
     except Exception as e:
         logger.error(f"Error traduciendo transcripción: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        _task_progress.pop(task_id, None)
 
 
 @app.post("/api/export")
@@ -543,44 +619,37 @@ async def export_video_with_subtitles(req: VideoExportRequest):
     base_name = video_path.stem
     
     try:
-        # 1. Generar SRT con traducción al español
+        # 1. Generar SRT con traducción al español (rápido, I/O puro)
         srt_path = EXPORTS_DIR / f"{base_name}_es.srt"
-        generate_srt_file(
-            translation["segments"],
-            srt_path,
-            use_translation=True
+        await asyncio.to_thread(
+            generate_srt_file, translation["segments"], srt_path, True
         )
-        
-        # 2. Quemar subtítulos en video
+
+        # 2. Quemar subtítulos en video con FFmpeg (CPU-intensivo, no bloquear)
         video_with_subs = EXPORTS_DIR / f"{base_name}_subtitulado.mp4"
-        burn_subtitles_to_video(
-            video_path,
-            srt_path,
-            video_with_subs,
-            subtitle_style=req.subtitle_style
+        await asyncio.to_thread(
+            burn_subtitles_to_video,
+            video_path, srt_path, video_with_subs, req.subtitle_style,
         )
-        
+
         final_video = video_with_subs
-        
+
         # 3. (Opcional) Generar y agregar audio TTS
         if req.include_tts:
             logger.info("Generando audio TTS en español...")
-            
+
             tts_audio_path = EXPORTS_DIR / f"{base_name}_tts.mp3"
             await generate_tts_audio(
                 translation["segments"],
                 tts_audio_path,
-                voice=req.tts_voice
+                voice=req.tts_voice,
             )
-            
-            # Reemplazar audio
+
             final_video = EXPORTS_DIR / f"{base_name}_final_con_tts.mp4"
-            replace_video_audio(
-                video_with_subs,
-                tts_audio_path,
-                final_video
+            await asyncio.to_thread(
+                replace_video_audio, video_with_subs, tts_audio_path, final_video
             )
-            
+
             logger.info(f"Video con TTS generado: {final_video}")
         else:
             logger.info(f"Video con subtitulos generado: {final_video}")

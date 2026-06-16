@@ -4,7 +4,8 @@ Usa NLLB-200 con CTranslate2 para RTX 4060 Ti
 """
 import logging
 from functools import lru_cache
-from typing import List, Optional, Dict
+from math import ceil
+from typing import Callable, List, Optional, Dict
 from pathlib import Path
 
 import torch
@@ -207,22 +208,12 @@ def translate_segments(
     segments: List[Dict],
     source_lang: str = "en",
     target_lang: str = "es",
+    progress_callback: Optional[Callable[[float], None]] = None,
 ) -> List[Dict]:
-    """
-    Traduce una lista de segmentos
-    
-    Args:
-        segments: Lista de segmentos con "text"
-        source_lang: Idioma fuente
-        target_lang: Idioma destino
-        
-    Returns:
-        Lista de segmentos con traducción agregada
-    """
+    """Traduce una lista de segmentos en batches. Llama progress_callback(0–1) por batch."""
     if not segments:
         return []
 
-    # Solo se traducen los segmentos con texto; el resto queda como ""
     texts, indices = [], []
     for i, segment in enumerate(segments):
         text = segment.get("text", "").strip()
@@ -231,9 +222,9 @@ def translate_segments(
             indices.append(i)
 
     translations = [""] * len(segments)
+    total_batches = max(1, ceil(len(texts) / NLLB_BATCH_SIZE))
 
-    # Traducir en batches (aprovecha mucho mejor la GPU que uno por uno)
-    for start in range(0, len(texts), NLLB_BATCH_SIZE):
+    for batch_num, start in enumerate(range(0, len(texts), NLLB_BATCH_SIZE)):
         batch_texts = texts[start:start + NLLB_BATCH_SIZE]
         batch_indices = indices[start:start + NLLB_BATCH_SIZE]
 
@@ -242,9 +233,12 @@ def translate_segments(
             for idx, translated in zip(batch_indices, batch_translations):
                 translations[idx] = translated
         except Exception as e:
-            logger.error(f"Error traduciendo batch: {e}")
+            logger.error(f"Error traduciendo batch {batch_num + 1}: {e}")
             for idx in batch_indices:
                 translations[idx] = f"[ERROR: {str(e)}]"
+
+        if progress_callback:
+            progress_callback((batch_num + 1) / total_batches)
 
     return [
         {**segment, "translated_text": translations[i]}

@@ -108,6 +108,22 @@ function hideInfo(element) {
 }
 
 // ============================================
+// PROGRESS POLLING
+// ============================================
+
+function startProgressPolling(taskId, onProgress) {
+  return setInterval(async () => {
+    try {
+      const r = await fetch(`${API_BASE}/api/progress/${taskId}`);
+      const d = await r.json();
+      if (d.progress >= 0) onProgress(d.progress);
+    } catch {
+      // silenciar errores de red durante polling
+    }
+  }, 400);
+}
+
+// ============================================
 // API CALLS
 // ============================================
 
@@ -203,19 +219,22 @@ async function downloadAudio(url, downloadVideo = false) {
 }
 
 async function transcribeAudio(fileName, language) {
+  const taskId = crypto.randomUUID();
   log("Transcribiendo con Whisper...");
   setButtonLoading(elements.transcribeBtn, true);
   hideInfo(elements.transcriptInfo);
-  elements.transcript.value = "Transcribiendo... (esto puede tomar un momento)";
+  elements.transcript.value = "Transcribiendo... 0%";
+
+  const pollInterval = startProgressPolling(taskId, (p) => {
+    const pct = Math.round(p * 100);
+    elements.transcript.value = `Transcribiendo... ${pct}%`;
+  });
 
   try {
     const resp = await fetch(`${API_BASE}/api/transcribe`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        file_name: fileName,
-        language: language || null,
-      }),
+      body: JSON.stringify({ file_name: fileName, language: language || null, task_id: taskId }),
     });
 
     const data = await resp.json();
@@ -233,10 +252,8 @@ async function transcribeAudio(fileName, language) {
         "success"
       );
 
-      // Habilitar traducción
       elements.translateBtn.disabled = false;
 
-      // Mostrar link al player si es video (puede ver con subtítulos originales)
       if (state.mediaType === "video") {
         elements.playerLink.classList.remove("hidden");
       }
@@ -251,24 +268,33 @@ async function transcribeAudio(fileName, language) {
     showInfo(elements.transcriptInfo, `Error: ${error.message}`, "error");
     throw error;
   } finally {
+    clearInterval(pollInterval);
     setButtonLoading(elements.transcribeBtn, false);
   }
 }
 
 async function translateTranscript(fileName, targetLang) {
+  const taskId = crypto.randomUUID();
+  const totalSegments = state.transcriptionData?.segments?.length || 0;
+
   log(`Traduciendo a ${targetLang}...`);
   setButtonLoading(elements.translateBtn, true);
   hideInfo(elements.translationInfo);
-  elements.translation.value = "Traduciendo... (esto puede tomar un momento)";
+  elements.translation.value = "Traduciendo... 0%";
+
+  const pollInterval = startProgressPolling(taskId, (p) => {
+    const pct = Math.round(p * 100);
+    const done = Math.round(p * totalSegments);
+    elements.translation.value = totalSegments
+      ? `Traduciendo... ${pct}% (${done}/${totalSegments} segmentos)`
+      : `Traduciendo... ${pct}%`;
+  });
 
   try {
     const resp = await fetch(`${API_BASE}/api/translate-transcript`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        file_name: fileName,
-        target_lang: targetLang,
-      }),
+      body: JSON.stringify({ file_name: fileName, target_lang: targetLang, task_id: taskId }),
     });
 
     const data = await resp.json();
@@ -286,10 +312,8 @@ async function translateTranscript(fileName, targetLang) {
         "success"
       );
 
-      // Habilitar exportación
       enableExportButtons();
 
-      // Mostrar link al player si es video
       if (state.mediaType === "video") {
         elements.playerLink.classList.remove("hidden");
       }
@@ -304,6 +328,7 @@ async function translateTranscript(fileName, targetLang) {
     showInfo(elements.translationInfo, `Error: ${error.message}`, "error");
     throw error;
   } finally {
+    clearInterval(pollInterval);
     setButtonLoading(elements.translateBtn, false);
   }
 }
