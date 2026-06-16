@@ -53,14 +53,11 @@ WHISPER_BEAM_SIZE = 5
 WHISPER_BEST_OF = 5
 WHISPER_TEMPERATURE = 0.0
 
-# VAD (Voice Activity Detection)
-WHISPER_VAD_FILTER = True
-WHISPER_VAD_PARAMS = {
-    "threshold": 0.5,
-    "min_speech_duration_ms": 250,
-    "min_silence_duration_ms": 500,
-    "speech_pad_ms": 400,
-}
+# Filtrado de segmentos sin voz (parámetros nativos de openai-whisper)
+# WHISPER_VAD_FILTER existía antes pero es un param de faster-whisper, no de openai-whisper.
+# Los equivalentes correctos son estos dos:
+WHISPER_NO_SPEECH_THRESHOLD = 0.6       # descarta segmentos con < 60% prob de habla
+WHISPER_COMPRESSION_RATIO_THRESHOLD = 2.4  # descarta segmentos comprimidos (garbage)
 
 # Language
 WHISPER_LANGUAGE = None  # Auto-detect
@@ -84,9 +81,12 @@ NLLB_MODEL_NAME = (
 )
 
 # Parámetros de traducción
-NLLB_BEAM_SIZE = 4
+NLLB_BEAM_SIZE = 5           # +1 beam mejora calidad notablemente (~20% más lento)
 NLLB_MAX_LENGTH = 512
 NLLB_BATCH_SIZE = 16
+NLLB_REPETITION_PENALTY = 1.1   # penaliza frases repetidas
+NLLB_NO_REPEAT_NGRAM = 4        # evita repetir bloques de 4 palabras exactas
+NLLB_CONTEXT_AWARE = True        # usar el segmento anterior como contexto
 
 # Códigos de idioma NLLB más comunes
 NLLB_LANG_CODES = {

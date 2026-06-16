@@ -19,6 +19,8 @@ from backend.config import (
     WHISPER_TASK,
     WHISPER_BEAM_SIZE,
     WHISPER_BEST_OF,
+    WHISPER_NO_SPEECH_THRESHOLD,
+    WHISPER_COMPRESSION_RATIO_THRESHOLD,
     get_device,
 )
 
@@ -175,7 +177,9 @@ def transcribe_file(
             fp16=torch.cuda.is_available(),
             beam_size=WHISPER_BEAM_SIZE,
             best_of=WHISPER_BEST_OF,
-            word_timestamps=True,  # timestamps por palabra para mejor sync de subtítulos
+            word_timestamps=True,
+            no_speech_threshold=WHISPER_NO_SPEECH_THRESHOLD,
+            compression_ratio_threshold=WHISPER_COMPRESSION_RATIO_THRESHOLD,
         )
 
         # Procesar segmentos
@@ -248,10 +252,13 @@ def transcribe_array(
         # Asegurar float32
         if audio_array.dtype != np.float32:
             audio_array = audio_array.astype(np.float32)
-        
-        # Whisper espera audio normalizado entre -1 y 1
-        if audio_array.max() > 1.0 or audio_array.min() < -1.0:
-            audio_array = audio_array / np.abs(audio_array).max()
+
+        # Normalizar entre -1 y 1; audio completamente silencioso → retornar vacío
+        max_val = np.abs(audio_array).max()
+        if max_val == 0.0:
+            return {"status": "ok", "text": "", "segments": [], "language": "unknown", "duration": 0.0}
+        if max_val > 1.0:
+            audio_array = audio_array / max_val
         
         result = model.transcribe(
             audio_array,
@@ -262,6 +269,8 @@ def transcribe_array(
             beam_size=WHISPER_BEAM_SIZE,
             best_of=WHISPER_BEST_OF,
             word_timestamps=True,
+            no_speech_threshold=WHISPER_NO_SPEECH_THRESHOLD,
+            compression_ratio_threshold=WHISPER_COMPRESSION_RATIO_THRESHOLD,
         )
 
         segments = []

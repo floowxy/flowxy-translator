@@ -32,6 +32,9 @@ const elements = {
   translation: document.getElementById("translation"),
   translationInfo: document.getElementById("translation-info"),
 
+  // Retranslate
+  retranslateBtn: document.getElementById("retranslateBtn"),
+
   // Export
   exportSrtBtn: document.getElementById("exportSrtBtn"),
   exportVttBtn: document.getElementById("exportVttBtn"),
@@ -380,6 +383,7 @@ async function translateTranscript(fileName, targetLang) {
       );
 
       enableExportButtons();
+      elements.retranslateBtn.disabled = false;
 
       if (state.mediaType === "video") {
         elements.playerLink.classList.remove("hidden");
@@ -398,6 +402,20 @@ async function translateTranscript(fileName, targetLang) {
     clearInterval(pollInterval);
     setButtonLoading(elements.translateBtn, false);
     _setBusy(-1);
+  }
+}
+
+async function retranslate() {
+  if (!state.currentFile) return;
+  log("Limpiando caché de traducción...");
+  try {
+    await fetch(`${API_BASE}/api/cache/translation/${encodeURIComponent(state.currentFile)}`, {
+      method: "DELETE",
+    });
+    log("↺ Retranslating con DP mejorado...");
+    await translateTranscript(state.currentFile, elements.targetLangSelect.value);
+  } catch (e) {
+    log(`Error en retranslate: ${e.message}`, "error");
   }
 }
 
@@ -582,6 +600,9 @@ elements.exportJsonBtn.addEventListener("click", async () => {
 
 // Video Export
 elements.exportVideoBtn.addEventListener("click", exportVideoWithSubtitles);
+
+// Retranslate
+elements.retranslateBtn.addEventListener("click", retranslate);
 
 // Clear Log (solo si existe)
 if (elements.clearLogBtn) {

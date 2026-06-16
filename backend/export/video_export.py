@@ -190,19 +190,24 @@ async def generate_tts_audio(
     return output_path
 
 
+def _ffconcat_path(p: Path) -> str:
+    """Escapa un path para el formato ffconcat (comillas simples, barras hacia adelante)."""
+    return str(p).replace("\\", "/").replace("'", "'\\''")
+
+
 async def merge_tts_segments(segment_files: List[Dict], output_path: Path, temp_dir: Path) -> None:
     """Combina segmentos TTS con silencios para sincronizar con timestamps."""
     concat_file = temp_dir / "concat_list.txt"
 
-    with open(concat_file, "w") as f:
+    with open(concat_file, "w", encoding="utf-8") as f:
         last_end = 0.0
         for seg in segment_files:
             gap = seg["start"] - last_end
             if gap > 0.1:
                 silence_file = temp_dir / f"silence_{last_end:.2f}.mp3"
                 await generate_silence(silence_file, gap)
-                f.write(f"file '{silence_file}'\n")
-            f.write(f"file '{seg['file']}'\n")
+                f.write(f"file '{_ffconcat_path(silence_file)}'\n")
+            f.write(f"file '{_ffconcat_path(seg['file'])}'\n")
             last_end = seg["end"]
 
     cmd = [

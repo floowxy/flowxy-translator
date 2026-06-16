@@ -176,13 +176,7 @@ realtime_handler = RealtimeHandler()
 
 
 async def websocket_endpoint(websocket: WebSocket):
-    """
-    WebSocket endpoint for real-time audio processing
-    Path: /ws
-    """
-    # Generate client ID
-    realtime_handler.connection_count += 1
-    client_id = f"client_{realtime_handler.connection_count}"
-    
-    # Handle connection
+    """WebSocket endpoint for real-time audio processing. Path: /ws"""
+    import uuid
+    client_id = f"ws_{uuid.uuid4().hex[:8]}"
     await realtime_handler.handle_connection(websocket, client_id)

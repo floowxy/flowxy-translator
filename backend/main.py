@@ -625,30 +625,34 @@ async def export_video_with_subtitles(req: VideoExportRequest):
 
     logger.info(f"Exportando video: {file_name} (TTS: {req.include_tts})")
 
-    # Buscar transcripción y traducción en cache
-    transcription = None
-    translation = None
-
-    for key in transcription_cache:
-        if key.startswith(file_name + "_"):
-            transcription = transcription_cache[key]
+    # Transcripción: memoria → disco (mismo patrón que el resto de endpoints)
+    transcription = next(
+        (transcription_cache[k] for k in transcription_cache if k.startswith(file_name + "_")),
+        None,
+    )
+    if not transcription:
+        transcription = _load_from_disk(_transcription_cache_path(file_name))
+        if transcription:
+            _cache_put(transcription_cache, f"{file_name}_None", transcription)
 
     if not transcription:
-        raise HTTPException(
-            status_code=404,
-            detail="Transcripción no encontrada. Transcribe primero."
-        )
+        raise HTTPException(status_code=404, detail="Transcripción no encontrada. Transcribe primero.")
 
-    # Buscar traducción (la más reciente si hay varias)
-    for key in translation_cache:
-        if key.startswith(file_name + "_"):
-            translation = translation_cache[key]
+    # Traducción: memoria → disco (prefiere español)
+    translation = next(
+        (translation_cache[k] for k in translation_cache if k.startswith(file_name + "_")),
+        None,
+    )
+    if not translation:
+        for lang in ["es"] + [l for l in NLLB_LANG_CODES if l != "es"]:
+            cached = _load_from_disk(_translation_cache_path(file_name, lang))
+            if cached:
+                translation = cached
+                _cache_put(translation_cache, f"{file_name}_{lang}", cached)
+                break
 
     if not translation:
-        raise HTTPException(
-            status_code=404,
-            detail="Traducción no encontrada. Traduce primero."
-        )
+        raise HTTPException(status_code=404, detail="Traducción no encontrada. Traduce primero.")
 
     # Paths
     video_path = DOWNLOADS_DIR / file_name
@@ -777,6 +781,10 @@ async def get_subtitles(file_name: str):
 async def upload_file(file: UploadFile = File(...)):
     """Sube un archivo de video/audio local. Alternativa a descargar de YouTube."""
     allowed = {'.mp4', '.mkv', '.mov', '.avi', '.webm', '.mp3', '.wav', '.m4a', '.ogg', '.flac'}
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Nombre de archivo requerido")
+
     upload_name = Path(file.filename).name
     ext = Path(upload_name).suffix.lower()
 
@@ -803,6 +811,22 @@ async def upload_file(file: UploadFile = File(...)):
         "size_bytes": dest.stat().st_size,
         "media_type": media_type,
     }
+
+
+@app.delete("/api/cache/translation/{file_name}")
+async def clear_translation_cache(file_name: str):
+    """Limpia solo la caché de traducción para poder retranslate con el DP mejorado."""
+    safe_name = _safe_filename(file_name)
+    stem = Path(safe_name).stem
+
+    for key in [k for k in translation_cache if k.startswith(safe_name + "_")]:
+        del translation_cache[key]
+
+    for p in DOWNLOADS_DIR.glob(f"{stem}_translation_*.json"):
+        p.unlink(missing_ok=True)
+
+    logger.info(f"Caché de traducción limpiada: {safe_name}")
+    return {"status": "ok", "cleared": safe_name}
 
 
 @app.delete("/api/files/{file_name}")

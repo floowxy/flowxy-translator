@@ -3,6 +3,7 @@ NLLB Translation Engine - Motor de traducción GPU-optimizado
 Usa NLLB-200 con CTranslate2 para RTX 4060 Ti
 """
 import logging
+import re
 from functools import lru_cache
 from math import ceil
 from typing import Callable, List, Optional, Dict
@@ -17,8 +18,10 @@ from backend.config import (
     NLLB_BEAM_SIZE,
     NLLB_MAX_LENGTH,
     NLLB_BATCH_SIZE,
+    NLLB_REPETITION_PENALTY,
+    NLLB_NO_REPEAT_NGRAM,
+    NLLB_CONTEXT_AWARE,
     NLLB_LANG_CODES,
-    COMPUTE_TYPE,
     get_device,
 )
 
@@ -210,51 +213,247 @@ def translate_text(
         raise
 
 
+# Patrón de cierre de oración en la fuente (inglés)
+_SENTENCE_END = re.compile(r'[.!?]["\'»]?\s*$')
+
+# Conectores que señalan inicio de nuevo pensamiento aunque no haya puntuación previa
+_CONNECTOR_START = re.compile(
+    r'^(however|but |now |so |let me|let\'s|alright|okay|well |'
+    r'next |then |finally|first |second |third |also |additionally|'
+    r'furthermore|moreover|therefore|thus |although|though |despite|'
+    r'moving on|anyway|speaking of|in fact|actually|basically|essentially|'
+    r'and now|now let|so now|so let)\b',
+    re.IGNORECASE,
+)
+
+# Post-procesamiento: artefactos comunes de NLLB en la traducción
+_FIX_SPACE_PUNCT  = re.compile(r'\s+([.!?,;:»\)\]])')          # "hola ." → "hola."
+_FIX_DOUBLE_LONG  = re.compile(r'\b(\w{4,})\s+\1\b', re.IGNORECASE)   # "función función" → "función"
+_FIX_DOUBLE_SHORT = re.compile(                                  # artículos duplicados
+    r'\b(el|la|de|un|una|los|las|en|es|se|le|lo)\s+\1\b',
+    re.IGNORECASE,
+)
+_FIX_MULTI_SPACE  = re.compile(r' {2,}')
+
+
+def _postprocess(text: str) -> str:
+    """Limpia artefactos conocidos del output de NLLB."""
+    text = _FIX_SPACE_PUNCT.sub(r'\1', text)
+    text = _FIX_DOUBLE_LONG.sub(r'\1', text)
+    text = _FIX_DOUBLE_SHORT.sub(r'\1', text)
+    text = _FIX_MULTI_SPACE.sub(' ', text)
+    return text.strip()
+
+
+def _translate_one(text: str, source_lang: str, target_lang: str) -> str:
+    """Traduce un texto con todos los parámetros de calidad configurados."""
+    source_code = get_lang_code(source_lang)
+    target_code = get_lang_code(target_lang)
+
+    model, tokenizer = get_nllb_model()
+    tokenizer.src_lang = source_code
+
+    inputs = tokenizer(
+        text,
+        return_tensors="pt",
+        truncation=True,
+        max_length=NLLB_MAX_LENGTH,
+    )
+
+    device = get_device()
+    if device == "cuda":
+        inputs = {k: v.to("cuda") for k, v in inputs.items()}
+
+    tokens = model.generate(
+        **inputs,
+        forced_bos_token_id=tokenizer.lang_code_to_id[target_code],
+        max_length=NLLB_MAX_LENGTH,
+        num_beams=NLLB_BEAM_SIZE,
+        repetition_penalty=NLLB_REPETITION_PENALTY,
+        no_repeat_ngram_size=NLLB_NO_REPEAT_NGRAM,
+    )
+
+    return _postprocess(tokenizer.decode(tokens[0], skip_special_tokens=True))
+
+
+def _extract_context_portion(full: str, ctx_src: str, tgt_src: str) -> str:
+    """
+    Extrae la parte del objetivo de una traducción conjunta 'contexto + objetivo'.
+
+    Estrategia 1 (con puntuación): divide en oraciones, toma las últimas proporcionales.
+    Estrategia 2 (sin puntuación): NLLB a veces omite el punto final — divide por
+    palabras para evitar devolver el contexto completo como parte del subtítulo.
+    """
+    ctx_w = len(ctx_src.split())
+    tgt_w = len(tgt_src.split())
+    total_w = ctx_w + tgt_w
+    if total_w == 0 or tgt_w == 0:
+        return full.strip()
+
+    sentences = re.split(r'(?<=[.!?])\s+', full.strip())
+    if len(sentences) > 1:
+        target_count = max(1, round(len(sentences) * tgt_w / total_w))
+        return ' '.join(sentences[-target_count:]).strip() or full.strip()
+
+    # Sin puntuación de cierre: división proporcional por palabras
+    words = full.split()
+    if not words:
+        return full.strip()
+    start = max(0, round(len(words) * ctx_w / total_w))
+    return ' '.join(words[start:]).strip() or full.strip()
+
+
+_PAUSE_THRESHOLD_S = 0.5  # segundos de silencio para cerrar grupo
+
+
+def _dp_group_segments(segments: List[Dict], max_words: int = 60) -> List[List[int]]:
+    """
+    Agrupación dinámica de segmentos en unidades de traducción óptimas.
+
+    Señales de cierre de grupo (greedy O(n)):
+      1. El texto termina con .!?             → oración completa
+      2. El grupo supera max_words            → evitar truncado del modelo
+      3. El siguiente segmento empieza con
+         un conector ("However,", "But ", …) → nuevo pensamiento
+      4. Hay un silencio ≥ 0.5 s entre
+         el segmento anterior y el actual     → pausa natural entre frases
+    """
+    groups: List[List[int]] = []
+    current: List[int] = []
+    current_words = 0
+
+    for i, seg in enumerate(segments):
+        text = seg.get("text", "").strip()
+
+        # Señales que indican que este segmento ABRE un nuevo grupo
+        if current:
+            is_connector = bool(_CONNECTOR_START.match(text))
+            prev_end = segments[i - 1].get("end", 0)
+            curr_start = seg.get("start", 0)
+            is_after_pause = (curr_start - prev_end) >= _PAUSE_THRESHOLD_S
+
+            if is_connector or is_after_pause:
+                groups.append(current)
+                current, current_words = [], 0
+
+        current.append(i)
+        current_words += len(text.split()) if text else 0
+
+        closes_sentence = bool(_SENTENCE_END.search(text))
+        too_long = current_words >= max_words
+
+        if closes_sentence or too_long:
+            groups.append(current)
+            current, current_words = [], 0
+
+    if current:
+        groups.append(current)
+
+    return groups
+
+
 def translate_segments(
     segments: List[Dict],
     source_lang: str = "en",
     target_lang: str = "es",
     progress_callback: Optional[Callable[[float], None]] = None,
 ) -> List[Dict]:
-    """Traduce una lista de segmentos en batches. Llama progress_callback(0–1) por batch."""
+    """
+    Traducción con agrupación dinámica y memoria inter-grupo.
+
+    Flujo:
+    1. _dp_group_segments: agrupa segmentos en unidades semánticamente completas
+       (oración por oración, no bloques fijos)
+    2. Cada grupo se traduce como texto unificado → mejor coherencia intra-oración
+    3. El texto del grupo anterior se pasa como contexto al siguiente → memoria
+       inter-grupo (pronombres, referencias, continuidad de discurso)
+    4. Todos los segmentos del grupo reciben la traducción completa del grupo
+
+    Si NLLB_CONTEXT_AWARE=False: batch puro sin agrupación (modo rápido).
+    """
     if not segments:
         return []
 
-    texts, indices = [], []
-    for i, segment in enumerate(segments):
-        text = segment.get("text", "").strip()
-        if text:
-            texts.append(text)
-            indices.append(i)
+    if not NLLB_CONTEXT_AWARE:
+        # ── Modo batch rápido sin contexto (fallback) ────────────────────────
+        texts, indices, translations = [], [], [""] * len(segments)
+        for i, seg in enumerate(segments):
+            t = seg.get("text", "").strip()
+            if t:
+                texts.append(t)
+                indices.append(i)
 
+        total_batches = max(1, ceil(len(texts) / NLLB_BATCH_SIZE))
+        for b, start in enumerate(range(0, len(texts), NLLB_BATCH_SIZE)):
+            batch_t = texts[start:start + NLLB_BATCH_SIZE]
+            batch_i = indices[start:start + NLLB_BATCH_SIZE]
+            try:
+                for idx, t in zip(batch_i, translate_batch(batch_t, source_lang, target_lang)):
+                    translations[idx] = t
+            except Exception as e:
+                logger.warning(f"Batch {b+1} falló: {e}")
+                for st, si in zip(batch_t, batch_i):
+                    try:
+                        translations[si] = (translate_batch([st], source_lang, target_lang) or [""])[0]
+                    except Exception:
+                        translations[si] = ""
+            if progress_callback:
+                progress_callback((b + 1) / total_batches)
+
+        return [{**seg, "translated_text": translations[i]} for i, seg in enumerate(segments)]
+
+    # ── Modo DP con agrupación dinámica y memoria inter-grupo ────────────────
+    groups = _dp_group_segments(segments)
+    n_groups = len(groups)
     translations = [""] * len(segments)
-    total_batches = max(1, ceil(len(texts) / NLLB_BATCH_SIZE))
+    prev_src = ""  # memoria del grupo anterior
 
-    for batch_num, start in enumerate(range(0, len(texts), NLLB_BATCH_SIZE)):
-        batch_texts = texts[start:start + NLLB_BATCH_SIZE]
-        batch_indices = indices[start:start + NLLB_BATCH_SIZE]
+    logger.info(f"DP grouping: {len(segments)} segmentos → {n_groups} grupos")
+
+    for g_idx, indices in enumerate(groups):
+        group_texts = [segments[i].get("text", "").strip() for i in indices]
+        group_src = " ".join(t for t in group_texts if t)
+
+        if not group_src:
+            if progress_callback:
+                progress_callback((g_idx + 1) / n_groups)
+            continue
+
+        # Construir fuente con contexto inter-grupo (memoria)
+        src_with_ctx = f"{prev_src} {group_src}".strip() if prev_src else group_src
 
         try:
-            batch_translations = translate_batch(batch_texts, source_lang, target_lang)
-            for idx, translated in zip(batch_indices, batch_translations):
-                translations[idx] = translated
+            full = _translate_one(src_with_ctx, source_lang, target_lang)
+            group_translation = (
+                _extract_context_portion(full, prev_src, group_src)
+                if prev_src else full
+            )
         except Exception as e:
-            logger.warning(f"Batch {batch_num + 1} falló ({e}), reintentando segmento a segmento...")
-            for sub_text, sub_idx in zip(batch_texts, batch_indices):
-                try:
-                    sub_result = translate_batch([sub_text], source_lang, target_lang)
-                    translations[sub_idx] = sub_result[0] if sub_result else ""
-                except Exception as e2:
-                    logger.error(f"Segmento {sub_idx} falló también: {e2}")
-                    translations[sub_idx] = ""
+            logger.warning(f"Grupo {g_idx+1} falló ({e}), reintentando sin contexto...")
+            try:
+                group_translation = _translate_one(group_src, source_lang, target_lang)
+            except Exception as e2:
+                logger.error(f"Grupo {g_idx+1} falló también: {e2}")
+                group_translation = ""
+
+        # Todos los segmentos del grupo reciben la traducción completa del grupo
+        for i in indices:
+            translations[i] = group_translation
+
+        # Contexto inter-grupo: solo usar si el grupo terminó en oración completa.
+        # Un grupo cortado por max_words da contexto de baja calidad (frase incompleta).
+        if _SENTENCE_END.search(group_src):
+            prev_src = group_src
+        else:
+            # Extraer solo la última oración completa del grupo
+            parts = re.split(r'(?<=[.!?])\s+', group_src)
+            prev_src = parts[-2] if len(parts) >= 2 else ""
+        logger.debug(f"Grupo {g_idx+1}/{n_groups} [{len(indices)} segs]: '{group_src[:50]}...'")
 
         if progress_callback:
-            progress_callback((batch_num + 1) / total_batches)
+            progress_callback((g_idx + 1) / n_groups)
 
-    return [
-        {**segment, "translated_text": translations[i]}
-        for i, segment in enumerate(segments)
-    ]
+    return [{**seg, "translated_text": translations[i]} for i, seg in enumerate(segments)]
 
 
 def translate_batch(
@@ -307,6 +506,8 @@ def translate_batch(
             forced_bos_token_id=tokenizer.lang_code_to_id[target_code],
             max_length=NLLB_MAX_LENGTH,
             num_beams=NLLB_BEAM_SIZE,
+            repetition_penalty=NLLB_REPETITION_PENALTY,
+            no_repeat_ngram_size=NLLB_NO_REPEAT_NGRAM,
         )
         
         # Decodificar
