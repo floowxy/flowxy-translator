@@ -2,6 +2,7 @@
 SRT Exporter - Exporta subtítulos en formato SubRip (.srt)
 """
 import logging
+import math
 from pathlib import Path
 from typing import List, Dict, Any
 
@@ -60,15 +61,21 @@ def wrap_text(text: str, max_chars: int = 42, max_lines: int = 2) -> List[str]:
     return lines
 
 
-def consolidate_segments(segments: List[Dict[str, Any]], use_translation: bool = True) -> List[Dict[str, Any]]:
+def consolidate_segments(
+    segments: List[Dict[str, Any]],
+    use_translation: bool = True,
+    max_duration_s: float = 6.0,
+) -> List[Dict[str, Any]]:
     """
-    Fusiona segmentos consecutivos que tienen el mismo texto de subtítulo.
+    Fusiona segmentos con el mismo texto y luego divide los que duran demasiado.
 
-    El DP grouper asigna la misma translated_text a todos los segmentos de un
-    grupo. Sin consolidar, el SRT tiene N entradas idénticas que hacen parpadear
-    el subtítulo en cada límite de segmento. Con consolidar, queda una sola
-    entrada que abarca todo el tiempo del grupo — aparece cuando empieza la
-    oración y desaparece cuando termina.
+    Paso 1 — fusionar: N segmentos idénticos consecutivos → 1 entrada que abarca
+    todo el rango temporal (sin parpadeo en límites de segmento).
+
+    Paso 2 — dividir: si una entrada fusionada supera max_duration_s, se divide
+    en chunks proporcionales distribuyendo las palabras de la traducción por
+    tiempo. Evita que el subtítulo se quede "colgado" cuando el speaker habla
+    mucho sin pausas ni puntuación.
     """
     if not segments:
         return []
@@ -78,17 +85,45 @@ def consolidate_segments(segments: List[Dict[str, Any]], use_translation: bool =
             return seg["translated_text"].strip()
         return seg.get("text", "").strip()
 
-    result: List[Dict] = []
+    # ── Paso 1: fusionar consecutivos con el mismo texto ──────────────────────
+    merged: List[Dict] = []
     current = dict(segments[0])
-
     for seg in segments[1:]:
         if _text(seg) == _text(current):
-            current["end"] = seg["end"]  # extender el rango temporal
+            current["end"] = seg["end"]
         else:
-            result.append(current)
+            merged.append(current)
             current = dict(seg)
+    merged.append(current)
 
-    result.append(current)
+    # ── Paso 2: dividir entradas demasiado largas ──────────────────────────────
+    result: List[Dict] = []
+    for entry in merged:
+        duration = entry["end"] - entry["start"]
+        text = _text(entry)
+
+        if duration <= max_duration_s or not text:
+            result.append(entry)
+            continue
+
+        n = math.ceil(duration / max_duration_s)
+        chunk_dur = duration / n
+        words = text.split()
+
+        for i in range(n):
+            w_start = round(i * len(words) / n)
+            w_end = round((i + 1) * len(words) / n)
+            chunk_text = " ".join(words[w_start:w_end]) or text
+
+            chunk = dict(entry)
+            chunk["start"] = round(entry["start"] + i * chunk_dur, 3)
+            chunk["end"] = round(entry["start"] + (i + 1) * chunk_dur, 3)
+            if use_translation:
+                chunk["translated_text"] = chunk_text
+            else:
+                chunk["text"] = chunk_text
+            result.append(chunk)
+
     return result
 
 
@@ -99,6 +134,7 @@ def create_srt(
     max_chars_per_line: int = 42,
     max_lines: int = 2,
     consolidate: bool = False,
+    max_duration_s: float = 6.0,
 ) -> Path:
     """
     Crea archivo SRT de subtítulos.
@@ -108,7 +144,7 @@ def create_srt(
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    segs = consolidate_segments(segments, use_translation) if consolidate else segments
+    segs = consolidate_segments(segments, use_translation, max_duration_s) if consolidate else segments
 
     with open(output_path, "w", encoding="utf-8") as f:
         counter = 1

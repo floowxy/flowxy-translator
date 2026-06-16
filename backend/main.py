@@ -674,7 +674,7 @@ async def export_video_with_subtitles(req: VideoExportRequest):
         srt_path = EXPORTS_DIR / f"{base_name}_es.srt"
         await asyncio.to_thread(
             create_srt, translation["segments"], srt_path, True,
-            max_chars_per_line=60, max_lines=3, consolidate=True,
+            max_chars_per_line=60, max_lines=3, consolidate=True, max_duration_s=6.0,
         )
         _task_progress[task_id] = 0.05
 
