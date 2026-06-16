@@ -666,10 +666,16 @@ async def export_video_with_subtitles(req: VideoExportRequest):
     base_name = video_path.stem
     
     try:
-        # 1. Generar SRT
+        # 1. Generar SRT consolidado:
+        #    - consolidate=True: fusiona segmentos con la misma traducción en
+        #      una sola entrada → sin parpadeo, sincronizado con la oración completa
+        #    - 60×3: oraciones largas del DP grouper caben sin truncarse
         _task_progress[task_id] = 0.02
         srt_path = EXPORTS_DIR / f"{base_name}_es.srt"
-        await asyncio.to_thread(create_srt, translation["segments"], srt_path, True)
+        await asyncio.to_thread(
+            create_srt, translation["segments"], srt_path, True,
+            max_chars_per_line=60, max_lines=3, consolidate=True,
+        )
         _task_progress[task_id] = 0.05
 
         # 2. FFmpeg — progreso real via callback (0.05 → 0.75)
