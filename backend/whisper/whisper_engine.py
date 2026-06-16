@@ -166,20 +166,29 @@ def transcribe_file(
             language=language,
             task=task,
             verbose=False,
-            fp16=torch.cuda.is_available(),  # Usar FP16 en GPU
+            fp16=torch.cuda.is_available(),
             beam_size=WHISPER_BEAM_SIZE,
             best_of=WHISPER_BEST_OF,
+            word_timestamps=True,  # timestamps por palabra para mejor sync de subtítulos
         )
-        
+
         # Procesar segmentos
         segments: List[Dict[str, Any]] = []
-        
+
         for seg in result.get("segments", []):
             segment_dict = {
                 "id": seg.get("id", 0),
                 "start": round(seg.get("start", 0.0), 2),
                 "end": round(seg.get("end", 0.0), 2),
                 "text": seg.get("text", "").strip(),
+                "words": [
+                    {
+                        "word": w.get("word", "").strip(),
+                        "start": round(w.get("start", 0.0), 2),
+                        "end": round(w.get("end", 0.0), 2),
+                    }
+                    for w in seg.get("words", [])
+                ],
             }
             segments.append(segment_dict)
         

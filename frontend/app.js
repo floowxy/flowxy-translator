@@ -593,6 +593,149 @@ async function exportVideoWithSubtitles() {
 }
 
 // ============================================
+// HISTORIAL DE ARCHIVOS PROCESADOS
+// ============================================
+
+async function loadHistory() {
+  try {
+    const resp = await fetch(`${API_BASE}/api/history`);
+    const data = await resp.json();
+    const entries = data.entries || [];
+    if (entries.length === 0) return;
+
+    const section = document.getElementById("history-section");
+    const list = document.getElementById("history-list");
+
+    list.innerHTML = entries.map((entry) => {
+      const mins = Math.round(entry.duration / 60);
+      const transLabel = entry.translations.length
+        ? `· ✓ ${entry.translations.join(", ")}`
+        : "";
+      const icon = entry.media_type === "video" ? "🎬" : "🎵";
+      const preview = entry.text_preview ? `"${entry.text_preview}…"` : "";
+
+      return `
+        <div class="history-entry"
+             data-filename="${entry.file_name.replace(/"/g, "&quot;")}"
+             data-mediatype="${entry.media_type}"
+             data-translations="${JSON.stringify(entry.translations).replace(/"/g, "&quot;")}"
+             style="display:flex; align-items:center; gap:1rem; padding:0.9rem 1rem;
+                    background:rgba(255,255,255,0.04); border-radius:var(--radius-md);
+                    border:1px solid rgba(255,255,255,0.08); cursor:pointer;
+                    transition: border-color 0.2s, background 0.2s;"
+             onmouseenter="this.style.background='rgba(102,126,234,0.12)'; this.style.borderColor='rgba(102,126,234,0.4)'"
+             onmouseleave="this.style.background='rgba(255,255,255,0.04)'; this.style.borderColor='rgba(255,255,255,0.08)'">
+          <div style="font-size:1.8rem; flex-shrink:0;">${icon}</div>
+          <div style="flex:1; min-width:0; overflow:hidden;">
+            <div style="font-weight:600; font-size:0.875rem; color:var(--text-primary);
+                        white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+              ${entry.file_name}
+            </div>
+            <div style="font-size:0.78rem; color:var(--text-secondary); margin-top:0.2rem;">
+              ${entry.language.toUpperCase()} · ${mins} min · ${entry.segments} segmentos ${transLabel}
+            </div>
+            ${preview ? `<div style="font-size:0.78rem; color:var(--text-muted); margin-top:0.15rem;
+                              font-style:italic; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                           ${preview}</div>` : ""}
+          </div>
+          <div style="color:var(--accent-cyan); font-size:1rem; flex-shrink:0; opacity:0.7;">Restaurar →</div>
+        </div>`;
+    }).join("");
+
+    // Event listeners con data-attributes (evita problemas con nombres de archivo especiales)
+    list.querySelectorAll(".history-entry").forEach((el) => {
+      el.addEventListener("click", () => {
+        const fileName = el.dataset.filename;
+        const mediaType = el.dataset.mediatype;
+        const translations = JSON.parse(el.dataset.translations);
+        restoreSession(fileName, mediaType, translations);
+      });
+    });
+
+    section.style.display = "block";
+  } catch {
+    // Historial no disponible — no es crítico
+  }
+}
+
+async function restoreSession(fileName, mediaType, translations) {
+  log(`Restaurando sesión: ${fileName}`);
+
+  state.currentFile = fileName;
+  state.mediaType = mediaType;
+
+  // Cargar media en el player
+  const encodedFileName = encodeURIComponent(fileName);
+  if (mediaType === "video") {
+    elements.videoPlayer.src = `${API_BASE}/video/${encodedFileName}`;
+    elements.videoPlayer.load();
+    elements.videoPlayer.style.display = "block";
+    elements.audioPlayer.style.display = "none";
+    localStorage.setItem("lastDownloadedFile", fileName);
+    localStorage.setItem("lastMediaType", "video");
+  } else {
+    elements.audioPlayer.src = `${API_BASE}/audio/${encodedFileName}`;
+    elements.audioPlayer.load();
+    elements.audioPlayer.style.display = "block";
+    elements.videoPlayer.style.display = "none";
+  }
+
+  showInfo(elements.downloadInfo, `Restaurado: ${fileName}`, "success");
+  elements.transcribeBtn.disabled = false;
+
+  // Transcripción — llega del disco en milisegundos
+  try {
+    elements.transcript.value = "Restaurando transcripción…";
+    const resp = await fetch(`${API_BASE}/api/transcribe`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ file_name: fileName, language: null, task_id: crypto.randomUUID() }),
+    });
+    const data = await resp.json();
+    if (resp.ok && data.status === "ok") {
+      state.transcriptionData = data;
+      state.sourceLanguage = data.language;
+      elements.transcript.value = data.text;
+      elements.translateBtn.disabled = false;
+      showInfo(elements.transcriptInfo,
+        `Idioma: ${data.language} | ${data.segments.length} segmentos | Restaurado desde caché`,
+        "success");
+      if (mediaType === "video") elements.playerLink.classList.remove("hidden");
+    }
+  } catch {
+    log("No se pudo restaurar la transcripción", "warning");
+  }
+
+  // Traducción — también del disco si existe
+  if (translations.length > 0) {
+    const lang = translations.includes("es") ? "es" : translations[0];
+    try {
+      elements.translation.value = "Restaurando traducción…";
+      const resp = await fetch(`${API_BASE}/api/translate-transcript`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ file_name: fileName, target_lang: lang, task_id: crypto.randomUUID() }),
+      });
+      const data = await resp.json();
+      if (resp.ok && data.status === "ok") {
+        state.translationData = data;
+        state.targetLanguage = lang;
+        elements.translation.value = data.translated_text;
+        enableExportButtons();
+        showInfo(elements.translationInfo,
+          `${data.source_lang} → ${data.target_lang} | ${data.segments.length} segmentos | Restaurado desde caché`,
+          "success");
+      }
+    } catch {
+      log("No se pudo restaurar la traducción", "warning");
+    }
+  }
+
+  log(`✓ Sesión restaurada: ${fileName}`, "success");
+  document.querySelector(".container:not(#history-section)").scrollIntoView({ behavior: "smooth" });
+}
+
+// ============================================
 // INIT
 // ============================================
 
@@ -600,11 +743,11 @@ async function init() {
   log("🚀 Flowxy-Translator iniciado");
   log("Versión: 1.0.0 | GPU-Optimized");
 
-  // Fetch GPU stats
   await fetchGPUStats();
-
-  // Update GPU stats every 5 seconds
   setInterval(fetchGPUStats, 5000);
+
+  // Cargar historial de archivos procesados
+  await loadHistory();
 
   log("Sistema listo. Pega una URL para comenzar.");
 }

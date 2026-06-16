@@ -24,12 +24,13 @@ from backend.config import (
     SERVER_HOST,
     SERVER_PORT,
     CORS_ORIGINS,
+    NLLB_LANG_CODES,
 )
 from backend.utils.logger import setup_global_logger, get_logger
 from backend.utils.gpu_stats import get_gpu_stats, get_cuda_info, print_gpu_summary
 from backend.utils.timers import timer
-from backend.whisper.whisper_engine import transcribe_file
-from backend.translation.nllb_engine import translate_text, translate_segments
+from backend.whisper.whisper_engine import transcribe_file, get_whisper_model
+from backend.translation.nllb_engine import translate_text, translate_segments, get_nllb_model
 from backend.export.srt_exporter import create_srt, create_bilingual_srt
 from backend.export.vtt_exporter import create_vtt, create_bilingual_vtt
 from backend.export.transcript_export import export_json, export_txt, export_bilingual_txt
@@ -111,6 +112,9 @@ translation_cache: dict = {}
 # Progreso de tareas en curso: task_id -> float (0.0 - 1.0)
 _task_progress: dict[str, float] = {}
 
+# Mutex GPU: serializa acceso a Whisper y NLLB para evitar condiciones de carrera
+_gpu_lock = asyncio.Lock()
+
 
 # ── Helpers de persistencia en disco ────────────────────────────────
 
@@ -147,6 +151,17 @@ def _safe_filename(file_name: str) -> str:
     if not safe_name or safe_name in (".", "..") or safe_name != file_name:
         raise HTTPException(status_code=400, detail="Nombre de archivo inválido")
     return safe_name
+
+
+# ============================================
+# HELPERS SÍNCRONOS (para asyncio.to_thread)
+# ============================================
+
+def _ytdlp_download(ydl_opts: dict, url: str) -> tuple:
+    """Ejecuta yt-dlp sincrónicamente. Llamar siempre desde asyncio.to_thread."""
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        return info, ydl.prepare_filename(info)
 
 
 # ============================================
@@ -250,9 +265,7 @@ async def download_audio(req: DownloadRequest):
             logger.info("Usando cookies de navegador para yt-dlp")
         
         with timer("Download audio"):
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(req.url, download=True)
-                filename = ydl.prepare_filename(info)
+            info, filename = await asyncio.to_thread(_ytdlp_download, ydl_opts, req.url)
         
         file_path = Path(filename)
         
@@ -332,11 +345,12 @@ async def transcribe_endpoint(req: TranscribeRequest):
 
     logger.info(f"Transcribiendo: {file_name}")
     try:
-        with timer("Transcription"):
-            result = await asyncio.to_thread(
-                transcribe_file, file_path, language=req.language,
-                progress_callback=_progress,
-            )
+        async with _gpu_lock:
+            with timer("Transcription"):
+                result = await asyncio.to_thread(
+                    transcribe_file, file_path, language=req.language,
+                    progress_callback=_progress,
+                )
 
         _task_progress[task_id] = 1.0
         transcription_cache[cache_key] = result
@@ -424,14 +438,15 @@ async def translate_transcript(req: TranslateTranscriptRequest):
 
     logger.info(f"Traduciendo {len(segments)} segmentos: {source_lang} → {req.target_lang}")
     try:
-        with timer("Translate segments"):
-            translated_segments = await asyncio.to_thread(
-                translate_segments,
-                segments,
-                source_lang=source_lang,
-                target_lang=req.target_lang,
-                progress_callback=_progress,
-            )
+        async with _gpu_lock:
+            with timer("Translate segments"):
+                translated_segments = await asyncio.to_thread(
+                    translate_segments,
+                    segments,
+                    source_lang=source_lang,
+                    target_lang=req.target_lang,
+                    progress_callback=_progress,
+                )
 
         _task_progress[task_id] = 1.0
         translated_text = " ".join(
@@ -572,10 +587,9 @@ async def export_video_with_subtitles(req: VideoExportRequest):
     3. (Opcional) Generar audio TTS y reemplazar
     """
     from backend.export.video_export import (
-        generate_srt_file,
         burn_subtitles_to_video,
         generate_tts_audio,
-        replace_video_audio
+        replace_video_audio,
     )
     
     file_name = _safe_filename(req.file_name)
@@ -619,10 +633,10 @@ async def export_video_with_subtitles(req: VideoExportRequest):
     base_name = video_path.stem
     
     try:
-        # 1. Generar SRT con traducción al español (rápido, I/O puro)
+        # 1. Generar SRT con traducción y wrap_text correcto
         srt_path = EXPORTS_DIR / f"{base_name}_es.srt"
         await asyncio.to_thread(
-            generate_srt_file, translation["segments"], srt_path, True
+            create_srt, translation["segments"], srt_path, True
         )
 
         # 2. Quemar subtítulos en video con FFmpeg (CPU-intensivo, no bloquear)
@@ -727,7 +741,50 @@ async def get_subtitles(file_name: str):
 # WEBSOCKET - REAL-TIME SUBTITLES
 # ============================================
 
-@app.websocket("/ws") 
+@app.get("/api/history")
+async def get_history():
+    """Lista de videos ya procesados con transcripción en disco."""
+    entries = []
+    for json_path in sorted(
+        DOWNLOADS_DIR.glob("*_transcription.json"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    ):
+        try:
+            data = json.loads(json_path.read_text(encoding="utf-8"))
+            media_stem = json_path.stem[: -len("_transcription")]
+
+            candidates = [
+                p for p in DOWNLOADS_DIR.glob(f"{media_stem}.*")
+                if p.suffix != ".json"
+            ]
+            if not candidates:
+                continue
+
+            media_file = candidates[0].name
+            media_type = "video" if "_video" in media_file else "audio"
+
+            translations = [
+                lang for lang in NLLB_LANG_CODES
+                if _translation_cache_path(media_file, lang).exists()
+            ]
+
+            entries.append({
+                "file_name": media_file,
+                "media_type": media_type,
+                "language": data.get("language", "?"),
+                "duration": data.get("duration", 0),
+                "text_preview": data.get("text", "")[:120].strip(),
+                "segments": len(data.get("segments", [])),
+                "translations": translations,
+            })
+        except Exception as e:
+            logger.warning(f"Error leyendo historial {json_path.name}: {e}")
+
+    return {"entries": entries}
+
+
+@app.websocket("/ws")
 async def websocket_route(websocket: WebSocket):
     """
     WebSocket endpoint for real-time subtitle translation from Chrome extension
@@ -741,21 +798,27 @@ async def websocket_route(websocket: WebSocket):
 
 @app.on_event("startup")
 async def startup_event():
-    """Evento de inicio"""
     logger.info("=" * 60)
     logger.info("FLOWXY-TRANSLATOR - Starting")
     logger.info("=" * 60)
-    
-    # Print GPU info
+
     print_gpu_summary()
-    
-    # Crear directorios
+
     DOWNLOADS_DIR.mkdir(exist_ok=True, parents=True)
     EXPORTS_DIR.mkdir(exist_ok=True, parents=True)
-    
-    logger.info(f"Downloads dir: {DOWNLOADS_DIR}")
-    logger.info(f"Exports dir: {EXPORTS_DIR}")
+
     logger.info(f"Server: http://{SERVER_HOST}:{SERVER_PORT}")
+
+    # Precargar modelos en RAM para eliminar el cold-start de 30s
+    logger.info("Precargando modelos en memoria...")
+    try:
+        await asyncio.to_thread(get_whisper_model)
+        logger.info("✓ Whisper listo")
+        await asyncio.to_thread(get_nllb_model)
+        logger.info("✓ NLLB listo")
+    except Exception as e:
+        logger.warning(f"Precarga parcial: {e} — los modelos cargarán en el primer request")
+
     logger.info("=" * 60)
 
 
