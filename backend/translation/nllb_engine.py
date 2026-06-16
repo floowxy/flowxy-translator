@@ -84,6 +84,12 @@ def get_nllb_model():
     return model, tokenizer
 
 
+def preload_to_cpu() -> None:
+    """Carga el modelo en CPU RAM sin moverlo a GPU. Elimina el cold-start del primer request."""
+    _load_nllb_model()
+    logger.info(f"✓ NLLB {NLLB_MODEL_NAME} precargado en CPU")
+
+
 def offload_nllb_model():
     """Mueve el modelo NLLB a CPU para liberar VRAM (si está cargado)."""
     if _load_nllb_model.cache_info().currsize == 0:
@@ -233,9 +239,14 @@ def translate_segments(
             for idx, translated in zip(batch_indices, batch_translations):
                 translations[idx] = translated
         except Exception as e:
-            logger.error(f"Error traduciendo batch {batch_num + 1}: {e}")
-            for idx in batch_indices:
-                translations[idx] = f"[ERROR: {str(e)}]"
+            logger.warning(f"Batch {batch_num + 1} falló ({e}), reintentando segmento a segmento...")
+            for sub_text, sub_idx in zip(batch_texts, batch_indices):
+                try:
+                    sub_result = translate_batch([sub_text], source_lang, target_lang)
+                    translations[sub_idx] = sub_result[0] if sub_result else ""
+                except Exception as e2:
+                    logger.error(f"Segmento {sub_idx} falló también: {e2}")
+                    translations[sub_idx] = ""
 
         if progress_callback:
             progress_callback((batch_num + 1) / total_batches)

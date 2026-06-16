@@ -93,6 +93,12 @@ def _get_audio_duration(audio_path: Path) -> float:
         return 0.0
 
 
+def preload_to_cpu() -> None:
+    """Carga el modelo en CPU RAM sin moverlo a GPU. Elimina el cold-start del primer request."""
+    _load_whisper_model()
+    logger.info(f"✓ Whisper {WHISPER_MODEL_SIZE} precargado en CPU")
+
+
 def offload_whisper_model():
     """Mueve el modelo Whisper a CPU para liberar VRAM (si está cargado)."""
     if _load_whisper_model.cache_info().currsize == 0:
@@ -255,8 +261,9 @@ def transcribe_array(
             fp16=torch.cuda.is_available(),
             beam_size=WHISPER_BEAM_SIZE,
             best_of=WHISPER_BEST_OF,
+            word_timestamps=True,
         )
-        
+
         segments = []
         for seg in result.get("segments", []):
             segments.append({
@@ -264,6 +271,14 @@ def transcribe_array(
                 "start": round(seg.get("start", 0.0), 2),
                 "end": round(seg.get("end", 0.0), 2),
                 "text": seg.get("text", "").strip(),
+                "words": [
+                    {
+                        "word": w.get("word", "").strip(),
+                        "start": round(w.get("start", 0.0), 2),
+                        "end": round(w.get("end", 0.0), 2),
+                    }
+                    for w in seg.get("words", [])
+                ],
             })
         
         return {

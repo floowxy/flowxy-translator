@@ -9,9 +9,11 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+import aiofiles
+
+from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import yt_dlp
@@ -28,9 +30,10 @@ from backend.config import (
 )
 from backend.utils.logger import setup_global_logger, get_logger
 from backend.utils.gpu_stats import get_gpu_stats, get_cuda_info, print_gpu_summary
+from backend.utils.gpu_lock import gpu_lock as _gpu_lock
 from backend.utils.timers import timer
-from backend.whisper.whisper_engine import transcribe_file, get_whisper_model
-from backend.translation.nllb_engine import translate_text, translate_segments, get_nllb_model
+from backend.whisper.whisper_engine import transcribe_file, preload_to_cpu as _whisper_preload
+from backend.translation.nllb_engine import translate_text, translate_segments, preload_to_cpu as _nllb_preload
 from backend.export.srt_exporter import create_srt, create_bilingual_srt
 from backend.export.vtt_exporter import create_vtt, create_bilingual_vtt
 from backend.export.transcript_export import export_json, export_txt, export_bilingual_txt
@@ -99,8 +102,9 @@ class ExportRequest(BaseModel):
 class VideoExportRequest(BaseModel):
     file_name: str
     include_tts: bool = False
-    tts_voice: str = "es-ES-AlvaroNeural"  # Voz masculina por defecto
+    tts_voice: str = "es-ES-AlvaroNeural"
     subtitle_style: Optional[dict] = None
+    task_id: Optional[str] = None
 
 
 # ============================================================
@@ -112,8 +116,7 @@ translation_cache: dict = {}
 # Progreso de tareas en curso: task_id -> float (0.0 - 1.0)
 _task_progress: dict[str, float] = {}
 
-# Mutex GPU: serializa acceso a Whisper y NLLB para evitar condiciones de carrera
-_gpu_lock = asyncio.Lock()
+# _gpu_lock viene de backend.utils.gpu_lock (compartido con WebSocket handler)
 
 
 # ── Helpers de persistencia en disco ────────────────────────────────
@@ -124,6 +127,16 @@ def _transcription_cache_path(file_name: str) -> Path:
 
 def _translation_cache_path(file_name: str, lang: str) -> Path:
     return DOWNLOADS_DIR / f"{Path(file_name).stem}_translation_{lang}.json"
+
+
+_MAX_CACHE = 20  # entradas máximas por caché (FIFO cuando se supera)
+
+
+def _cache_put(cache: dict, key: str, value: dict) -> None:
+    """Inserta en caché con cap de _MAX_CACHE entradas (FIFO)."""
+    if key not in cache and len(cache) >= _MAX_CACHE:
+        cache.pop(next(iter(cache)))
+    cache[key] = value
 
 
 def _save_to_disk(path: Path, data: dict) -> None:
@@ -178,6 +191,11 @@ async def root():
 async def player():
     """Servir video player page"""
     return FileResponse(FRONTEND_DIR / "player.html")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return Response(status_code=204)
 
 
 @app.get("/health")
@@ -333,7 +351,7 @@ async def transcribe_endpoint(req: TranscribeRequest):
     cached = _load_from_disk(_transcription_cache_path(file_name))
     if cached:
         logger.info("Transcripción en caché (disco)")
-        transcription_cache[cache_key] = cached
+        _cache_put(transcription_cache, cache_key, cached)
         return cached
 
     # 3. Transcribir
@@ -353,7 +371,7 @@ async def transcribe_endpoint(req: TranscribeRequest):
                 )
 
         _task_progress[task_id] = 1.0
-        transcription_cache[cache_key] = result
+        _cache_put(transcription_cache, cache_key, result)
         _save_to_disk(_transcription_cache_path(file_name), result)
 
         logger.info(f"Transcripción completada: {len(result['text'])} chars")
@@ -368,25 +386,25 @@ async def transcribe_endpoint(req: TranscribeRequest):
 
 @app.post("/api/translate")
 async def translate_endpoint(req: TranslateRequest):
-    """
-    Traduce texto usando NLLB (GPU)
-    """
+    """Traduce texto usando NLLB (GPU). Serializado con gpu_lock."""
     if not req.text.strip():
         raise HTTPException(status_code=400, detail="Texto vacío")
-    
+
     logger.info(f"Translating: {req.source_lang} -> {req.target_lang}")
-    
+
     try:
-        with timer("Translation"):
-            result = translate_text(
-                req.text,
-                source_lang=req.source_lang,
-                target_lang=req.target_lang,
-            )
-        
+        async with _gpu_lock:
+            with timer("Translation"):
+                result = await asyncio.to_thread(
+                    translate_text,
+                    req.text,
+                    source_lang=req.source_lang,
+                    target_lang=req.target_lang,
+                )
+
         logger.info("Translation completed")
         return result
-        
+
     except Exception as e:
         logger.error(f"Error traduciendo: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -426,7 +444,7 @@ async def translate_transcript(req: TranslateTranscriptRequest):
     cached = _load_from_disk(_translation_cache_path(file_name, req.target_lang))
     if cached:
         logger.info("Traducción en caché (disco)")
-        translation_cache[trans_cache_key] = cached
+        _cache_put(translation_cache, trans_cache_key, cached)
         return cached
 
     # 5. Traducir
@@ -460,7 +478,7 @@ async def translate_transcript(req: TranslateTranscriptRequest):
             "source_lang": source_lang,
             "target_lang": req.target_lang,
         }
-        translation_cache[trans_cache_key] = result
+        _cache_put(translation_cache, trans_cache_key, result)
         _save_to_disk(_translation_cache_path(file_name, req.target_lang), result)
 
         logger.info("Traducción completada")
@@ -480,27 +498,35 @@ async def export_endpoint(req: ExportRequest):
     """
     file_name = _safe_filename(req.file_name)
 
-    # Obtener transcripción (cacheada como "{file_name}_{language}",
-    # donde language puede ser "None" o el idioma elegido por el usuario)
-    transcription = None
-    for key in transcription_cache:
-        if key.startswith(file_name + "_"):
-            transcription = transcription_cache[key]
+    # Transcripción: memoria → disco
+    transcription = next(
+        (transcription_cache[k] for k in transcription_cache if k.startswith(file_name + "_")),
+        None,
+    )
+    if not transcription:
+        transcription = _load_from_disk(_transcription_cache_path(file_name))
+        if transcription:
+            _cache_put(transcription_cache, f"{file_name}_None", transcription)
 
     if transcription is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Transcripción no encontrada"
-        )
+        raise HTTPException(status_code=404, detail="Transcripción no encontrada")
 
     segments = transcription.get("segments", [])
 
-    # Si usa traducción, obtenerla (la más reciente si hay varias)
+    # Traducción: memoria → disco (prefiere español)
     translation = None
     if req.use_translation:
-        for key in translation_cache:
-            if key.startswith(file_name + "_"):
-                translation = translation_cache[key]
+        translation = next(
+            (translation_cache[k] for k in translation_cache if k.startswith(file_name + "_")),
+            None,
+        )
+        if not translation:
+            for lang in ["es"] + [l for l in NLLB_LANG_CODES if l != "es"]:
+                cached = _load_from_disk(_translation_cache_path(file_name, lang))
+                if cached:
+                    translation = cached
+                    _cache_put(translation_cache, f"{file_name}_{lang}", cached)
+                    break
         if translation:
             segments = translation.get("segments", segments)
 
@@ -594,6 +620,9 @@ async def export_video_with_subtitles(req: VideoExportRequest):
     
     file_name = _safe_filename(req.file_name)
 
+    task_id = req.task_id or str(uuid.uuid4())
+    _task_progress[task_id] = 0.0
+
     logger.info(f"Exportando video: {file_name} (TTS: {req.include_tts})")
 
     # Buscar transcripción y traducción en cache
@@ -633,53 +662,55 @@ async def export_video_with_subtitles(req: VideoExportRequest):
     base_name = video_path.stem
     
     try:
-        # 1. Generar SRT con traducción y wrap_text correcto
+        # 1. Generar SRT
+        _task_progress[task_id] = 0.02
         srt_path = EXPORTS_DIR / f"{base_name}_es.srt"
-        await asyncio.to_thread(
-            create_srt, translation["segments"], srt_path, True
-        )
+        await asyncio.to_thread(create_srt, translation["segments"], srt_path, True)
+        _task_progress[task_id] = 0.05
 
-        # 2. Quemar subtítulos en video con FFmpeg (CPU-intensivo, no bloquear)
+        # 2. FFmpeg — progreso real via callback (0.05 → 0.75)
         video_with_subs = EXPORTS_DIR / f"{base_name}_subtitulado.mp4"
+
+        def _ffmpeg_progress(p: float) -> None:
+            _task_progress[task_id] = 0.05 + p * 0.70
+
         await asyncio.to_thread(
             burn_subtitles_to_video,
-            video_path, srt_path, video_with_subs, req.subtitle_style,
+            video_path, srt_path, video_with_subs, req.subtitle_style, _ffmpeg_progress,
         )
-
+        _task_progress[task_id] = 0.75
         final_video = video_with_subs
 
-        # 3. (Opcional) Generar y agregar audio TTS
+        # 3. (Opcional) TTS paralelo (0.75 → 1.0)
         if req.include_tts:
             logger.info("Generando audio TTS en español...")
+            _task_progress[task_id] = 0.78
 
             tts_audio_path = EXPORTS_DIR / f"{base_name}_tts.mp3"
-            await generate_tts_audio(
-                translation["segments"],
-                tts_audio_path,
-                voice=req.tts_voice,
-            )
+            await generate_tts_audio(translation["segments"], tts_audio_path, voice=req.tts_voice)
+            _task_progress[task_id] = 0.93
 
             final_video = EXPORTS_DIR / f"{base_name}_final_con_tts.mp4"
-            await asyncio.to_thread(
-                replace_video_audio, video_with_subs, tts_audio_path, final_video
-            )
-
+            await asyncio.to_thread(replace_video_audio, video_with_subs, tts_audio_path, final_video)
             logger.info(f"Video con TTS generado: {final_video}")
         else:
             logger.info(f"Video con subtitulos generado: {final_video}")
         
+        _task_progress[task_id] = 1.0
         return {
             "status": "ok",
             "message": "Video exportado exitosamente",
             "file_name": final_video.name,
             "file_path": f"/api/export/{final_video.name}",
             "size_bytes": final_video.stat().st_size,
-            "includes_tts": req.include_tts
+            "includes_tts": req.include_tts,
         }
-        
+
     except Exception as e:
         logger.error(f"Error exportando video: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        _task_progress.pop(task_id, None)
 
 
 # ============================================================
@@ -687,48 +718,49 @@ async def export_video_with_subtitles(req: VideoExportRequest):
 # ============================================================
 @app.get("/api/subtitles/{file_name}")
 async def get_subtitles(file_name: str):
-    """
-    Obtiene subtítulos para el video player
-    Retorna segmentos con timestamps y texto original/traducido
-    """
+    """Subtítulos para el reproductor — incluye words para word highlighting."""
     file_name = _safe_filename(file_name)
 
-    # Buscar transcripción en cache
-    transcription = None
-    for key in transcription_cache:
-        if key.startswith(file_name + "_"):
-            transcription = transcription_cache[key]
+    # 1. Memoria → 2. Disco
+    transcription = next(
+        (transcription_cache[k] for k in transcription_cache if k.startswith(file_name + "_")),
+        None,
+    )
+    if not transcription:
+        transcription = _load_from_disk(_transcription_cache_path(file_name))
+        if transcription:
+            _cache_put(transcription_cache, f"{file_name}_None", transcription)
 
     if not transcription:
-        raise HTTPException(
-            status_code=404,
-            detail="Subtítulos no encontrados. Transcribe el video primero."
-        )
+        raise HTTPException(status_code=404, detail="Subtítulos no encontrados. Transcribe el video primero.")
 
     segments = transcription.get("segments", [])
 
-    # Buscar traducción si existe (la más reciente si hay varias)
-    translation = None
-    for key in translation_cache:
-        if key.startswith(file_name + "_"):
-            translation = translation_cache[key]
-    
-    # Combinar transcripción y traducción
+    # Traducción: 1. Memoria → 2. Disco (prefiere español)
+    translation = next(
+        (translation_cache[k] for k in translation_cache if k.startswith(file_name + "_")),
+        None,
+    )
+    if not translation:
+        for lang in ["es"] + [l for l in NLLB_LANG_CODES if l != "es"]:
+            cached = _load_from_disk(_translation_cache_path(file_name, lang))
+            if cached:
+                translation = cached
+                _cache_put(translation_cache, f"{file_name}_{lang}", cached)
+                break
+
     result_segments = []
     for i, seg in enumerate(segments):
         segment_data = {
             "start": seg.get("start", 0),
             "end": seg.get("end", 0),
             "text": seg.get("text", ""),
+            "words": seg.get("words", []),  # word-level timestamps para highlighting
         }
-        
-        # Agregar traducción si existe
         if translation and i < len(translation.get("segments", [])):
-            trans_seg = translation["segments"][i]
-            segment_data["translated"] = trans_seg.get("translated_text", "")
-        
+            segment_data["translated"] = translation["segments"][i].get("translated_text", "")
         result_segments.append(segment_data)
-    
+
     return {
         "status": "ok",
         "file_name": file_name,
@@ -740,6 +772,60 @@ async def get_subtitles(file_name: str):
 # ============================================
 # WEBSOCKET - REAL-TIME SUBTITLES
 # ============================================
+
+@app.post("/api/upload")
+async def upload_file(file: UploadFile = File(...)):
+    """Sube un archivo de video/audio local. Alternativa a descargar de YouTube."""
+    allowed = {'.mp4', '.mkv', '.mov', '.avi', '.webm', '.mp3', '.wav', '.m4a', '.ogg', '.flac'}
+    upload_name = Path(file.filename).name
+    ext = Path(upload_name).suffix.lower()
+
+    if not upload_name or ext not in allowed:
+        raise HTTPException(status_code=400, detail=f"Formato no soportado: {ext or 'sin extensión'}")
+
+    dest = DOWNLOADS_DIR / upload_name
+    logger.info(f"Subiendo archivo local: {upload_name}")
+
+    try:
+        async with aiofiles.open(dest, "wb") as f:
+            while chunk := await file.read(1024 * 1024):  # 1 MB chunks
+                await f.write(chunk)
+    except Exception as e:
+        logger.error(f"Error subiendo archivo: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    media_type = "video" if ext in {".mp4", ".mkv", ".mov", ".avi", ".webm"} else "audio"
+    logger.info(f"✓ Subido: {upload_name} ({dest.stat().st_size} bytes)")
+
+    return {
+        "status": "ok",
+        "file_name": upload_name,
+        "size_bytes": dest.stat().st_size,
+        "media_type": media_type,
+    }
+
+
+@app.delete("/api/files/{file_name}")
+async def delete_file(file_name: str):
+    """Elimina un archivo de media, sus JSONs de caché y los exports asociados."""
+    safe_name = _safe_filename(file_name)
+    stem = Path(safe_name).stem
+
+    (DOWNLOADS_DIR / safe_name).unlink(missing_ok=True)
+
+    for p in DOWNLOADS_DIR.glob(f"{stem}_*.json"):
+        p.unlink(missing_ok=True)
+
+    for p in EXPORTS_DIR.glob(f"{stem}_*"):
+        p.unlink(missing_ok=True)
+
+    for cache in (transcription_cache, translation_cache):
+        for key in [k for k in cache if k.startswith(safe_name + "_")]:
+            del cache[key]
+
+    logger.info(f"Borrado: {safe_name}")
+    return {"status": "ok", "deleted": safe_name}
+
 
 @app.get("/api/history")
 async def get_history():
@@ -810,12 +896,10 @@ async def startup_event():
     logger.info(f"Server: http://{SERVER_HOST}:{SERVER_PORT}")
 
     # Precargar modelos en RAM para eliminar el cold-start de 30s
-    logger.info("Precargando modelos en memoria...")
+    logger.info("Precargando modelos en CPU RAM (sin mover a GPU)...")
     try:
-        await asyncio.to_thread(get_whisper_model)
-        logger.info("✓ Whisper listo")
-        await asyncio.to_thread(get_nllb_model)
-        logger.info("✓ NLLB listo")
+        await asyncio.to_thread(_whisper_preload)
+        await asyncio.to_thread(_nllb_preload)
     except Exception as e:
         logger.warning(f"Precarga parcial: {e} — los modelos cargarán en el primer request")
 

@@ -47,12 +47,29 @@ const elements = {
   exportProgressBar: document.getElementById("export-progress-bar"),
   exportVideoInfo: document.getElementById("export-video-info"),
 
+  // Upload local
+  dropZone: document.getElementById("dropZone"),
+  fileInput: document.getElementById("fileInput"),
+  uploadInfo: document.getElementById("upload-info"),
+
   // GPU & Log (opcional)
   gpuStats: document.getElementById("gpu-stats"),
-  footerGpu: document.getElementById("footerGpu"), // Puede ser null
-  log: document.getElementById("logConsole"), // Puede ser null
-  clearLogBtn: document.getElementById("clearLogBtn"), // Puede ser null
+  footerGpu: document.getElementById("footerGpu"),
+  log: document.getElementById("logConsole"),
+  clearLogBtn: document.getElementById("clearLogBtn"),
 };
+
+// ============================================
+// GPU POLLING ADAPTATIVO
+// ============================================
+let _gpuPollTimer = null;
+let _activeTasks = 0;
+
+function _setBusy(delta) {
+  _activeTasks = Math.max(0, _activeTasks + delta);
+  clearInterval(_gpuPollTimer);
+  _gpuPollTimer = setInterval(fetchGPUStats, _activeTasks > 0 ? 4000 : 30000);
+}
 
 // State
 let state = {
@@ -152,19 +169,65 @@ async function fetchGPUStats() {
   }
 }
 
+async function uploadFile(file) {
+  log(`Subiendo: ${file.name} (${(file.size / 1024 / 1024).toFixed(1)} MB)`);
+  hideInfo(elements.uploadInfo);
+
+  const formData = new FormData();
+  formData.append("file", file);
+
+  _setBusy(1);
+  try {
+    const resp = await fetch(`${API_BASE}/api/upload`, { method: "POST", body: formData });
+    const data = await resp.json();
+
+    if (resp.ok && data.status === "ok") {
+      state.currentFile = data.file_name;
+      state.mediaType = data.media_type;
+
+      const url = data.media_type === "video"
+        ? `${API_BASE}/video/${encodeURIComponent(data.file_name)}`
+        : `${API_BASE}/audio/${encodeURIComponent(data.file_name)}`;
+
+      if (data.media_type === "video") {
+        elements.videoPlayer.src = url;
+        elements.videoPlayer.load();
+        elements.videoPlayer.style.display = "block";
+        elements.audioPlayer.style.display = "none";
+        localStorage.setItem("lastDownloadedFile", data.file_name);
+        localStorage.setItem("lastMediaType", "video");
+      } else {
+        elements.audioPlayer.src = url;
+        elements.audioPlayer.load();
+        elements.audioPlayer.style.display = "block";
+        elements.videoPlayer.style.display = "none";
+      }
+
+      elements.transcribeBtn.disabled = false;
+      showInfo(elements.uploadInfo, `✓ ${data.file_name} — ${(file.size / 1024 / 1024).toFixed(1)} MB`, "success");
+      log(`✓ Archivo listo: ${data.file_name}`, "success");
+    } else {
+      throw new Error(data.detail || "Error al subir");
+    }
+  } catch (error) {
+    log(`Error: ${error.message}`, "error");
+    showInfo(elements.uploadInfo, `Error: ${error.message}`, "error");
+  } finally {
+    _setBusy(-1);
+  }
+}
+
 async function downloadAudio(url, downloadVideo = false) {
   log(downloadVideo ? "Descargando video..." : "Descargando audio...");
   setButtonLoading(elements.downloadBtn, true);
   hideInfo(elements.downloadInfo);
 
+  _setBusy(1);
   try {
     const resp = await fetch(`${API_BASE}/api/download`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        url,
-        download_video: downloadVideo
-      }),
+      body: JSON.stringify({ url, download_video: downloadVideo }),
     });
 
     const data = await resp.json();
@@ -215,6 +278,7 @@ async function downloadAudio(url, downloadVideo = false) {
     throw error;
   } finally {
     setButtonLoading(elements.downloadBtn, false);
+    _setBusy(-1);
   }
 }
 
@@ -230,6 +294,7 @@ async function transcribeAudio(fileName, language) {
     elements.transcript.value = `Transcribiendo... ${pct}%`;
   });
 
+  _setBusy(1);
   try {
     const resp = await fetch(`${API_BASE}/api/transcribe`, {
       method: "POST",
@@ -270,6 +335,7 @@ async function transcribeAudio(fileName, language) {
   } finally {
     clearInterval(pollInterval);
     setButtonLoading(elements.transcribeBtn, false);
+    _setBusy(-1);
   }
 }
 
@@ -290,6 +356,7 @@ async function translateTranscript(fileName, targetLang) {
       : `Traduciendo... ${pct}%`;
   });
 
+  _setBusy(1);
   try {
     const resp = await fetch(`${API_BASE}/api/translate-transcript`, {
       method: "POST",
@@ -330,6 +397,7 @@ async function translateTranscript(fileName, targetLang) {
   } finally {
     clearInterval(pollInterval);
     setButtonLoading(elements.translateBtn, false);
+    _setBusy(-1);
   }
 }
 
@@ -391,6 +459,29 @@ function enableExportButtons() {
 // ============================================
 // EVENT LISTENERS
 // ============================================
+
+// Upload — drag & drop + file input
+elements.dropZone.addEventListener("dragover", (e) => {
+  e.preventDefault();
+  elements.dropZone.style.borderColor = "rgba(102,126,234,0.8)";
+  elements.dropZone.style.background = "rgba(102,126,234,0.08)";
+});
+elements.dropZone.addEventListener("dragleave", () => {
+  elements.dropZone.style.borderColor = "rgba(102,126,234,0.35)";
+  elements.dropZone.style.background = "";
+});
+elements.dropZone.addEventListener("drop", (e) => {
+  e.preventDefault();
+  elements.dropZone.style.borderColor = "rgba(102,126,234,0.35)";
+  elements.dropZone.style.background = "";
+  const file = e.dataTransfer.files[0];
+  if (file) uploadFile(file);
+});
+elements.dropZone.addEventListener("click", () => elements.fileInput.click());
+elements.fileInput.addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  if (file) uploadFile(file);
+});
 
 // Download
 elements.downloadBtn.addEventListener("click", async () => {
@@ -511,32 +602,31 @@ async function exportVideoWithSubtitles() {
     return;
   }
 
+  const taskId = crypto.randomUUID();
   const includeTts = elements.includeTtsCheck.checked;
 
   log(`Generando video con subtítulos${includeTts ? " + TTS" : ""}...`);
 
-  // Mostrar progress bar
   elements.exportVideoProgress.classList.remove("hidden");
   elements.exportVideoBtn.disabled = true;
   elements.exportProgressBar.style.width = "0%";
   elements.exportProgressText.textContent = "Iniciando exportación...";
 
-  // Simular progreso (ya que el proceso es largo)
-  let progress = 0;
-  const progressInterval = setInterval(() => {
-    progress += 5;
-    if (progress <= 90) {
-      elements.exportProgressBar.style.width = `${progress}%`;
-
-      if (progress < 30) {
-        elements.exportProgressText.textContent = "Generando archivo SRT...";
-      } else if (progress < 60) {
-        elements.exportProgressText.textContent = "Quemando subtítulos en video...";
-      } else if (includeTts && progress < 90) {
-        elements.exportProgressText.textContent = "Generando audio TTS...";
-      }
+  _setBusy(1);
+  // Progreso real via polling — FFmpeg reporta out_time_ms al backend
+  const pollInterval = startProgressPolling(taskId, (p) => {
+    const pct = Math.round(p * 100);
+    elements.exportProgressBar.style.width = `${pct}%`;
+    if (p < 0.05) {
+      elements.exportProgressText.textContent = "Generando subtítulos SRT...";
+    } else if (p < 0.75) {
+      elements.exportProgressText.textContent = `Quemando subtítulos... ${pct}%`;
+    } else if (includeTts && p < 0.93) {
+      elements.exportProgressText.textContent = `Generando audio TTS... ${pct}%`;
+    } else {
+      elements.exportProgressText.textContent = `Finalizando... ${pct}%`;
     }
-  }, 1000);
+  });
 
   try {
     const resp = await fetch(`${API_BASE}/api/export-video`, {
@@ -545,37 +635,33 @@ async function exportVideoWithSubtitles() {
       body: JSON.stringify({
         file_name: state.currentFile,
         include_tts: includeTts,
+        task_id: taskId,
       }),
     });
 
-    clearInterval(progressInterval);
+    clearInterval(pollInterval);
     elements.exportProgressBar.style.width = "100%";
 
     const data = await resp.json();
 
     if (resp.ok && data.status === "ok") {
       elements.exportProgressText.textContent = "✓ Completado!";
-
       log(`✓ Video exportado: ${data.file_name}`, "success");
 
-      // Mostrar info y link de descarga
       const sizeMB = (data.size_bytes / (1024 * 1024)).toFixed(2);
       showInfo(
         elements.exportVideoInfo,
-        `Video generado: ${data.file_name} (${sizeMB} MB) - ${includeTts ? "Con TTS" : "Sin TTS"}`,
+        `Video generado: ${data.file_name} (${sizeMB} MB) — ${includeTts ? "Con TTS" : "Sin TTS"}`,
         "success"
       );
 
-      // Crear link de descarga
       const downloadLink = document.createElement("a");
       downloadLink.href = `${API_BASE}${data.file_path}`;
       downloadLink.download = data.file_name;
       downloadLink.textContent = "⬇️ DESCARGAR VIDEO FINAL";
-      downloadLink.style.cssText = "display: block; margin-top: 1rem; padding: 1rem; background: var(--accent-success); color: white; text-align: center; text-decoration: none; border-radius: var(--radius-md); font-weight: bold;";
-
+      downloadLink.style.cssText = "display:block; margin-top:1rem; padding:1rem; background:var(--accent-success); color:white; text-align:center; text-decoration:none; border-radius:var(--radius-md); font-weight:bold;";
       elements.exportVideoInfo.appendChild(downloadLink);
 
-      // Ocultar progress después de 2 segundos
       setTimeout(() => {
         elements.exportVideoProgress.classList.add("hidden");
         elements.exportVideoBtn.disabled = false;
@@ -584,11 +670,13 @@ async function exportVideoWithSubtitles() {
       throw new Error(data.detail || "Error exportando video");
     }
   } catch (error) {
-    clearInterval(progressInterval);
+    clearInterval(pollInterval);
     log(`Error: ${error.message}`, "error");
     showInfo(elements.exportVideoInfo, `Error: ${error.message}`, "error");
     elements.exportVideoProgress.classList.add("hidden");
     elements.exportVideoBtn.disabled = false;
+  } finally {
+    _setBusy(-1);
   }
 }
 
@@ -608,9 +696,7 @@ async function loadHistory() {
 
     list.innerHTML = entries.map((entry) => {
       const mins = Math.round(entry.duration / 60);
-      const transLabel = entry.translations.length
-        ? `· ✓ ${entry.translations.join(", ")}`
-        : "";
+      const transLabel = entry.translations.length ? `· ✓ ${entry.translations.join(", ")}` : "";
       const icon = entry.media_type === "video" ? "🎬" : "🎵";
       const preview = entry.text_preview ? `"${entry.text_preview}…"` : "";
 
@@ -622,29 +708,36 @@ async function loadHistory() {
              style="display:flex; align-items:center; gap:1rem; padding:0.9rem 1rem;
                     background:rgba(255,255,255,0.04); border-radius:var(--radius-md);
                     border:1px solid rgba(255,255,255,0.08); cursor:pointer;
-                    transition: border-color 0.2s, background 0.2s;"
-             onmouseenter="this.style.background='rgba(102,126,234,0.12)'; this.style.borderColor='rgba(102,126,234,0.4)'"
-             onmouseleave="this.style.background='rgba(255,255,255,0.04)'; this.style.borderColor='rgba(255,255,255,0.08)'">
-          <div style="font-size:1.8rem; flex-shrink:0;">${icon}</div>
-          <div style="flex:1; min-width:0; overflow:hidden;">
-            <div style="font-weight:600; font-size:0.875rem; color:var(--text-primary);
-                        white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-              ${entry.file_name}
+                    transition:border-color 0.2s,background 0.2s;"
+             onmouseenter="this.style.background='rgba(102,126,234,0.12)';this.style.borderColor='rgba(102,126,234,0.4)'"
+             onmouseleave="this.style.background='rgba(255,255,255,0.04)';this.style.borderColor='rgba(255,255,255,0.08)'">
+          <div style="font-size:1.8rem;flex-shrink:0;">${icon}</div>
+          <div style="flex:1;min-width:0;overflow:hidden;">
+            <div style="font-weight:600;font-size:0.875rem;color:var(--text-primary);
+                        white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${entry.file_name}</div>
+            <div style="font-size:0.78rem;color:var(--text-secondary);margin-top:0.2rem;">
+              ${entry.language.toUpperCase()} · ${mins} min · ${entry.segments} seg ${transLabel}
             </div>
-            <div style="font-size:0.78rem; color:var(--text-secondary); margin-top:0.2rem;">
-              ${entry.language.toUpperCase()} · ${mins} min · ${entry.segments} segmentos ${transLabel}
-            </div>
-            ${preview ? `<div style="font-size:0.78rem; color:var(--text-muted); margin-top:0.15rem;
-                              font-style:italic; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+            ${preview ? `<div style="font-size:0.78rem;color:var(--text-muted);margin-top:0.15rem;
+                              font-style:italic;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
                            ${preview}</div>` : ""}
           </div>
-          <div style="color:var(--accent-cyan); font-size:1rem; flex-shrink:0; opacity:0.7;">Restaurar →</div>
+          <div style="display:flex;align-items:center;gap:0.5rem;flex-shrink:0;">
+            <span style="color:var(--accent-cyan);font-size:0.85rem;opacity:0.7;">Restaurar →</span>
+            <button class="delete-btn"
+                    data-filename="${entry.file_name.replace(/"/g, "&quot;")}"
+                    title="Borrar archivo"
+                    style="background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.3);
+                           color:var(--accent-error);border-radius:var(--radius-sm);
+                           padding:0.25rem 0.5rem;cursor:pointer;font-size:0.8rem;
+                           transition:all 0.2s;line-height:1;">🗑️</button>
+          </div>
         </div>`;
     }).join("");
 
-    // Event listeners con data-attributes (evita problemas con nombres de archivo especiales)
     list.querySelectorAll(".history-entry").forEach((el) => {
-      el.addEventListener("click", () => {
+      el.addEventListener("click", (e) => {
+        if (e.target.closest(".delete-btn")) return;
         const fileName = el.dataset.filename;
         const mediaType = el.dataset.mediatype;
         const translations = JSON.parse(el.dataset.translations);
@@ -652,9 +745,28 @@ async function loadHistory() {
       });
     });
 
+    list.querySelectorAll(".delete-btn").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        deleteHistoryEntry(btn.dataset.filename);
+      });
+    });
+
     section.style.display = "block";
   } catch {
     // Historial no disponible — no es crítico
+  }
+}
+
+async function deleteHistoryEntry(fileName) {
+  try {
+    const resp = await fetch(`${API_BASE}/api/files/${encodeURIComponent(fileName)}`, { method: "DELETE" });
+    if (resp.ok) {
+      log(`✓ Borrado: ${fileName}`, "success");
+      await loadHistory();
+    }
+  } catch (e) {
+    log(`Error borrando: ${e.message}`, "error");
   }
 }
 
@@ -741,15 +853,13 @@ async function restoreSession(fileName, mediaType, translations) {
 
 async function init() {
   log("🚀 Flowxy-Translator iniciado");
-  log("Versión: 1.0.0 | GPU-Optimized");
 
   await fetchGPUStats();
-  setInterval(fetchGPUStats, 5000);
+  _gpuPollTimer = setInterval(fetchGPUStats, 30000); // idle: cada 30s
 
-  // Cargar historial de archivos procesados
   await loadHistory();
 
-  log("Sistema listo. Pega una URL para comenzar.");
+  log("Sistema listo. Pega una URL o arrastra un archivo para comenzar.");
 }
 
 // Start app

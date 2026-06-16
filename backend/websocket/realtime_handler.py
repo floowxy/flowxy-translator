@@ -12,6 +12,7 @@ import numpy as np
 from fastapi import WebSocket, WebSocketDisconnect
 from backend.utils.logger import get_logger
 from backend.utils.timers import timer
+from backend.utils.gpu_lock import gpu_lock
 from backend.whisper.whisper_engine import transcribe_array
 from backend.translation.nllb_engine import translate_text
 
@@ -102,36 +103,38 @@ class RealtimeHandler:
             
             logger.info(f"[WS] Processing {len(audio_float32)} samples at {timestamp:.2f}s")
             
-            # Transcribe with Whisper (in thread pool to not block)
-            with timer(f"Whisper transcription (chunk)"):
-                result = await asyncio.to_thread(
-                    transcribe_array,
-                    audio_float32,
-                    sample_rate=sample_rate
-                )
-            
+            # Transcribe con Whisper — GPU lock para no colisionar con REST endpoints
+            async with gpu_lock:
+                with timer("Whisper transcription (chunk)"):
+                    result = await asyncio.to_thread(
+                        transcribe_array,
+                        audio_float32,
+                        sample_rate=sample_rate,
+                    )
+
             original_text = result.get("text", "").strip()
-            
+
             if not original_text:
-                logger.debug(f"[WS] No speech detected in chunk")
+                logger.debug("[WS] No speech detected in chunk")
                 return
-            
+
             logger.info(f"[WS] Transcribed: '{original_text[:50]}...'")
-            
-            # Translate if needed
+
+            # Traducir si es necesario
             translated_text = original_text
             target_lang = conn_info["target_lang"]
             source_lang = result.get("language", "en")
-            
+
             if source_lang != target_lang:
-                with timer(f"Translation ({source_lang} → {target_lang})"):
-                    translation = await asyncio.to_thread(
-                        translate_text,
-                        original_text,
-                        source_lang=source_lang,
-                        target_lang=target_lang
-                    )
-                    translated_text = translation.get("translated_text", original_text)
+                async with gpu_lock:
+                    with timer(f"Translation ({source_lang} → {target_lang})"):
+                        translation = await asyncio.to_thread(
+                            translate_text,
+                            original_text,
+                            source_lang=source_lang,
+                            target_lang=target_lang,
+                        )
+                        translated_text = translation.get("translated_text", original_text)
                 
                 logger.info(f"[WS] Translated: '{translated_text[:50]}...'")
             

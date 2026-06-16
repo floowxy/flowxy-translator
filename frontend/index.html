@@ -7,6 +7,7 @@
   <title>Flowxy-Translator | GPU-Optimized Transcription & Translation</title>
   <meta name="description"
     content="Transcripción y traducción de videos con IA usando Whisper v3 y NLLB-200 optimizado para GPU" />
+  <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 
@@ -28,6 +29,22 @@
 
   <!-- Main Container -->
   <div class="container">
+
+    <!-- Upload local file (alternative to YouTube) -->
+    <section class="card" style="padding:1.5rem;">
+      <h2 style="font-size:1.05rem; margin-bottom:0.6rem;">📁 Subir Archivo Local <span style="font-size:0.8rem; opacity:0.6; font-weight:400;">(alternativa a YouTube)</span></h2>
+      <div id="dropZone"
+           style="border:2px dashed rgba(102,126,234,0.35); border-radius:var(--radius-md);
+                  padding:1.5rem 1rem; text-align:center; cursor:pointer; transition:all 0.2s;
+                  color:var(--text-secondary); font-size:0.9rem;">
+        Arrastra un MP4 · MKV · WebM · MP3 aquí — o
+        <label for="fileInput" style="color:var(--accent-cyan); cursor:pointer; font-weight:600;">
+          selecciona un archivo
+        </label>
+        <input type="file" id="fileInput" accept="video/*,audio/*,.mkv,.mov,.webm,.avi,.flac" style="display:none">
+      </div>
+      <div id="upload-info" class="info-box hidden"></div>
+    </section>
 
     <!-- Step 1: Download -->
     <section class="card">

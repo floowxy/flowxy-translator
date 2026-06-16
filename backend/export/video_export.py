@@ -4,71 +4,34 @@ Genera videos con subtítulos quemados y audio TTS opcional
 """
 
 import asyncio
-import shlex
 import subprocess
+import threading
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import Callable, List, Dict, Optional
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-def generate_srt_file(segments: List[Dict], output_path: Path, use_translation: bool = True) -> Path:
-    """
-    Genera archivo SRT desde segmentos de transcripción/traducción
-    
-    Args:
-        segments: Lista de segmentos con start, end, text, translated_text
-        output_path: Ruta donde guardar el SRT
-        use_translation: Si True, usa translated_text; si False, usa text original
-    
-    Returns:
-        Path al archivo SRT generado
-    """
-    srt_content = []
-    
-    for i, seg in enumerate(segments, 1):
-        start = seg.get("start", 0)
-        end = seg.get("end", 0)
-        
-        # Elegir texto (traducido o original)
-        if use_translation and "translated_text" in seg:
-            text = seg["translated_text"]
-        else:
-            text = seg.get("text", "")
-        
-        # Formato de tiempo SRT: HH:MM:SS,mmm
-        start_time = format_srt_time(start)
-        end_time = format_srt_time(end)
-        
-        # Formato SRT
-        srt_content.append(f"{i}")
-        srt_content.append(f"{start_time} --> {end_time}")
-        srt_content.append(text.strip())
-        srt_content.append("")  # Línea vacía entre subtítulos
-    
-    # Escribir archivo
-    output_path.write_text("\n".join(srt_content), encoding="utf-8")
-    logger.info(f"Archivo SRT generado: {output_path}")
-    
-    return output_path
-
-
-def format_srt_time(seconds: float) -> str:
-    """Convierte segundos a formato SRT (HH:MM:SS,mmm)"""
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    secs = int(seconds % 60)
-    millis = int((seconds % 1) * 1000)
-    
-    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+def _probe_duration(path: Path) -> float:
+    """Duración del archivo con ffprobe. Rápido, soporta todos los formatos."""
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "csv=p=0", str(path)],
+            capture_output=True, text=True, timeout=10,
+        )
+        return float(result.stdout.strip())
+    except Exception:
+        return 0.0
 
 
 def burn_subtitles_to_video(
     video_path: Path,
     srt_path: Path,
     output_path: Path,
-    subtitle_style: Optional[Dict] = None
+    subtitle_style: Optional[Dict] = None,
+    progress_callback: Optional[Callable[[float], None]] = None,
 ) -> Path:
     """
     Quema subtítulos en el video usando FFmpeg
@@ -112,139 +75,141 @@ def burn_subtitles_to_video(
         f"Alignment={subtitle_style['alignment']}'"
     )
     
-    # Comando FFmpeg
+    duration = _probe_duration(video_path)
+
     cmd = [
         "ffmpeg",
         "-i", str(video_path),
         "-vf", subtitle_filter,
-        "-c:a", "copy",  # Copiar audio sin re-encodear
-        "-c:v", "libx264",  # Codec de video
-        "-preset", "medium",  # Balance velocidad/calidad
-        "-crf", "23",  # Calidad (18-28, menor = mejor)
-        "-y",  # Sobrescribir si existe
-        str(output_path)
+        "-c:a", "copy",
+        "-c:v", "libx264",
+        "-preset", "medium",
+        "-crf", "23",
+        "-progress", "pipe:1",  # progreso real a stdout
+        "-nostats",
+        "-y",
+        str(output_path),
     ]
-    
-    logger.info("Quemando subtitulos en video...")
-    logger.info(f"Comando: {' '.join(cmd)}")
-    
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        logger.info(f"Subtitulos quemados exitosamente: {output_path}")
-        return output_path
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Error en FFmpeg: {e.stderr}")
-        raise
+
+    logger.info("Quemando subtitulos en video (FFmpeg)...")
+
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+    )
+
+    # Drenar stderr en hilo paralelo para evitar deadlock en el pipe
+    stderr_buf: list[str] = []
+
+    def _drain_stderr() -> None:
+        for line in proc.stderr:
+            stderr_buf.append(line)
+        proc.stderr.close()
+
+    t = threading.Thread(target=_drain_stderr, daemon=True)
+    t.start()
+
+    for line in proc.stdout:
+        line = line.strip()
+        if line.startswith("out_time_ms=") and duration > 0 and progress_callback:
+            try:
+                ms_str = line.split("=")[1].strip()
+                if ms_str and ms_str != "N/A":
+                    ms = int(ms_str)
+                    if ms > 0:
+                        progress_callback(min(0.95, ms / 1_000_000 / duration))
+            except (ValueError, IndexError):
+                pass
+
+    proc.stdout.close()
+    proc.wait()
+    t.join(timeout=2)
+
+    if proc.returncode != 0:
+        err = "".join(stderr_buf[-20:])
+        logger.error(f"Error en FFmpeg: {err}")
+        raise subprocess.CalledProcessError(proc.returncode, cmd, stderr=err)
+
+    logger.info(f"✓ Subtitulos quemados: {output_path}")
+    if progress_callback:
+        progress_callback(1.0)
+
+    return output_path
 
 
 async def generate_tts_audio(
     segments: List[Dict],
     output_path: Path,
-    voice: str = "es-ES-AlvaroNeural",  # Voz masculina española
-    rate: str = "+0%"
+    voice: str = "es-ES-AlvaroNeural",
+    rate: str = "+0%",
 ) -> Path:
-    """
-    Genera audio TTS desde segmentos traducidos usando edge-tts
-    
-    Args:
-        segments: Lista de segmentos con translated_text y timestamps
-        output_path: Ruta del archivo de audio de salida
-        voice: Voz de edge-tts (es-ES-AlvaroNeural, es-ES-ElviraNeural, etc.)
-        rate: Velocidad de habla (+/-N%)
-    
-    Returns:
-        Path al archivo de audio generado
-    """
+    """Genera audio TTS en paralelo (asyncio.gather + semáforo) y concatena con FFmpeg."""
     try:
         import edge_tts
     except ImportError:
         logger.error("edge-tts no está instalado. Ejecuta: pip install edge-tts")
         raise
-    
-    # Crear archivo temporal para cada segmento
+
     temp_dir = output_path.parent / "temp_tts"
     temp_dir.mkdir(exist_ok=True)
-    
-    segment_files = []
-    
-    logger.info(f"Generando audio TTS para {len(segments)} segmentos...")
-    
-    for i, seg in enumerate(segments):
-        text = seg.get("translated_text", seg.get("text", ""))
-        if not text.strip():
-            continue
-        
-        # Archivo temporal para este segmento
+
+    logger.info(f"Generando audio TTS para {len(segments)} segmentos (paralelo)...")
+
+    semaphore = asyncio.Semaphore(5)  # máx 5 conexiones simultáneas a edge-tts
+
+    async def _gen_one(i: int, seg: dict) -> Optional[Dict]:
+        text = seg.get("translated_text", seg.get("text", "")).strip()
+        if not text:
+            return None
         temp_file = temp_dir / f"segment_{i:04d}.mp3"
-        
-        # Generar TTS
-        communicate = edge_tts.Communicate(text, voice, rate=rate)
-        await communicate.save(str(temp_file))
-        
-        segment_files.append({
+        async with semaphore:
+            communicate = edge_tts.Communicate(text, voice, rate=rate)
+            await communicate.save(str(temp_file))
+        return {
             "file": temp_file,
             "start": seg.get("start", 0),
             "end": seg.get("end", 0),
-            "duration": seg.get("end", 0) - seg.get("start", 0)
-        })
-        
-        if (i + 1) % 10 == 0:
-            logger.info(f"  Procesado {i + 1}/{len(segments)} segmentos")
-    
-    logger.info(f"{len(segment_files)} segmentos de audio generados")
-    
-    # Ahora necesitamos concatenar y sincronizar los audios
-    # Esto requiere FFmpeg para crear silencios y concatenar
-    await merge_tts_segments(segment_files, output_path)
-    
-    # Limpiar archivos temporales
-    import shutil
-    shutil.rmtree(temp_dir)
-    
+            "duration": seg.get("end", 0) - seg.get("start", 0),
+        }
+
+    try:
+        results = await asyncio.gather(*[_gen_one(i, seg) for i, seg in enumerate(segments)])
+        segment_files = [r for r in results if r is not None]
+
+        logger.info(f"✓ {len(segment_files)} segmentos TTS generados")
+
+        await merge_tts_segments(segment_files, output_path, temp_dir)
+    finally:
+        import shutil
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
     return output_path
 
 
-async def merge_tts_segments(segment_files: List[Dict], output_path: Path):
-    """
-    Combina segmentos TTS con silencios para sincronizar con timestamps
-    """
-    # Crear archivo de lista para FFmpeg concat
-    concat_file = output_path.parent / "concat_list.txt"
-    
+async def merge_tts_segments(segment_files: List[Dict], output_path: Path, temp_dir: Path) -> None:
+    """Combina segmentos TTS con silencios para sincronizar con timestamps."""
+    concat_file = temp_dir / "concat_list.txt"
+
     with open(concat_file, "w") as f:
-        last_end = 0
-        
+        last_end = 0.0
         for seg in segment_files:
-            # Agregar silencio si hay gap
             gap = seg["start"] - last_end
-            if gap > 0.1:  # Si hay más de 100ms de gap
-                # Generar silencio
-                silence_file = output_path.parent / f"silence_{last_end:.2f}.mp3"
+            if gap > 0.1:
+                silence_file = temp_dir / f"silence_{last_end:.2f}.mp3"
                 await generate_silence(silence_file, gap)
                 f.write(f"file '{silence_file}'\n")
-            
-            # Agregar segmento de audio
             f.write(f"file '{seg['file']}'\n")
             last_end = seg["end"]
-    
-    # Concatenar todos los archivos
-    cmd = [
-        "ffmpeg",
-        "-f", "concat",
-        "-safe", "0",
-        "-i", str(concat_file),
-        "-c", "copy",
-        "-y",
-        str(output_path),
-    ]
 
+    cmd = [
+        "ffmpeg", "-f", "concat", "-safe", "0",
+        "-i", str(concat_file), "-c", "copy", "-y", str(output_path),
+    ]
     await asyncio.to_thread(subprocess.run, cmd, capture_output=True, check=True)
-    concat_file.unlink()
 
 
 async def generate_silence(output_path: Path, duration: float) -> None:

@@ -10,6 +10,10 @@ let currentVideo = null;
 let currentSegmentIndex = -1;
 let lastUpdateTime = 0;
 
+// Word highlighting state
+let _lastWordSegment = -1;
+let _wordSpans = [];
+
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
     await loadAvailableVideos();
@@ -24,8 +28,12 @@ function setupEventListeners() {
     // Video selection
     videoSelect.addEventListener('change', handleVideoChange);
 
-    // Subtitle mode change
-    subtitleMode.addEventListener('change', updateSubtitleMode);
+    // Subtitle mode change — reset word cache
+    subtitleMode.addEventListener('change', () => {
+        _lastWordSegment = -1;
+        _wordSpans = [];
+        updateSubtitleMode();
+    });
 
     // Video time update for subtitle synchronization
     video.addEventListener('timeupdate', updateSubtitles);
@@ -190,16 +198,51 @@ function updateSubtitles() {
                 <span class="subtitle-original">${escapeHtml(currentSegment.text)}</span>
                 <span class="subtitle-translated">${escapeHtml(translated)}</span>
             `;
+            _lastWordSegment = -1; // reset para cuando cambie a otro modo
         } else if (subtitleMode === 'translated') {
             subtitleDiv.classList.remove('bilingual');
             subtitleDiv.textContent = currentSegment.translated || currentSegment.text;
+            _lastWordSegment = -1;
         } else {
+            // Modo original — word highlighting
             subtitleDiv.classList.remove('bilingual');
-            subtitleDiv.textContent = currentSegment.text;
+            renderWithWordHighlight(currentSegment, segmentIndex, currentTime, subtitleDiv);
         }
     } else {
         subtitleDiv.style.display = 'none';
     }
+}
+
+function renderWithWordHighlight(segment, segmentIndex, currentTime, container) {
+    const words = segment.words || [];
+
+    // Re-render spans solo cuando cambia el segmento
+    if (segmentIndex !== _lastWordSegment) {
+        _lastWordSegment = segmentIndex;
+        _wordSpans = [];
+        container.innerHTML = '';
+
+        if (words.length === 0) {
+            container.textContent = segment.text;
+            return;
+        }
+
+        words.forEach((w) => {
+            const span = document.createElement('span');
+            span.textContent = w.word + ' ';
+            span.dataset.start = w.start;
+            span.dataset.end = w.end;
+            _wordSpans.push(span);
+            container.appendChild(span);
+        });
+    }
+
+    // Actualizar highlight eficientemente (solo clases, no re-render)
+    _wordSpans.forEach((span) => {
+        const active = currentTime >= parseFloat(span.dataset.start) &&
+                       currentTime <= parseFloat(span.dataset.end);
+        span.className = active ? 'word-highlight' : '';
+    });
 }
 
 function escapeHtml(text) {
