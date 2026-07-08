@@ -30,6 +30,7 @@
 
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", system-ui, sans-serif;
   --mono: ui-monospace, "JetBrains Mono", "Cascadia Code", "SF Mono", Menlo, monospace;
+  --display: "Unbounded", var(--sans);
 }
 
 * {
@@ -56,7 +57,73 @@ body {
   color: var(--text);
 }
 
-/* ── Top bar ─────────────────────────────────────────────── */
+/* ── Hero (solo index) ───────────────────────────────────── */
+
+.hero {
+  position: relative;
+  background: #07070c;
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+  margin-bottom: 1.4rem;
+}
+
+.hero-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.hero-inner {
+  position: relative;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 1.6rem 1.25rem 2.2rem;
+}
+
+.hero-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 2.4rem;
+}
+
+.hero-kicker {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.hero-wordmark {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: clamp(2.6rem, 9vw, 4.6rem);
+  line-height: 0.98;
+  letter-spacing: -0.01em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.hero-wordmark-outline {
+  display: block;
+  color: transparent;
+  -webkit-text-stroke: 1.5px var(--accent);
+  font-weight: 800;
+}
+
+.hero-tagline {
+  margin-top: 1.4rem;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--text-2);
+  letter-spacing: 0.02em;
+}
+
+/* ── Top bar (player) ────────────────────────────────────── */
 
 header {
   display: flex;
@@ -69,17 +136,15 @@ header {
 }
 
 header h1 {
-  font-size: 1.05rem;
-  font-weight: 650;
-  letter-spacing: -0.01em;
+  font-family: var(--display);
+  font-size: 0.95rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
 }
 
 header h1 .wordmark-accent {
   color: var(--accent-text);
-}
-
-header .subtitle {
-  display: none; /* el wordmark basta; el tagline vive en el footer */
 }
 
 .gpu-stats {
@@ -121,10 +186,26 @@ header .subtitle {
 }
 
 .card {
+  position: relative;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 1.5rem;
+  overflow: hidden;
+}
+
+/* Numeral fantasma del paso — decorativo, en la cara display */
+.ghost-num {
+  position: absolute;
+  top: 0.4rem;
+  right: 1rem;
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 4.2rem;
+  line-height: 1;
+  color: rgba(133, 120, 240, 0.07);
+  pointer-events: none;
+  user-select: none;
 }
 
 /* Encabezado de sección: eyebrow numerado (el flujo es una secuencia real) */
@@ -142,9 +223,11 @@ header .subtitle {
 }
 
 .card h2 {
-  font-size: 1.02rem;
-  font-weight: 650;
-  letter-spacing: -0.01em;
+  font-family: var(--display);
+  font-size: 0.98rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
   margin-bottom: 0.3rem;
   text-wrap: balance;
 }

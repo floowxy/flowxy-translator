@@ -1,14 +1,14 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { api } from "../api";
-import { getBusyCount, subscribeBusy } from "../busy";
+import { api } from "./api";
+import { getBusyCount, subscribeBusy } from "./busy";
 
-interface GpuState {
+export interface GpuState {
   text: string;
   available: boolean;
 }
 
-/** Top bar con wordmark y estado de GPU — polling adaptativo: 4s ocupado, 30s idle. */
-export function Header({ onGpuText }: { onGpuText?: (text: string) => void }) {
+/** Estado de GPU con polling adaptativo: 4s con tareas activas, 30s idle. */
+export function useGpu(onText?: (text: string) => void): GpuState {
   const busyCount = useSyncExternalStore(subscribeBusy, getBusyCount);
   const [gpu, setGpu] = useState<GpuState>({ text: "GPU …", available: true });
 
@@ -31,7 +31,7 @@ export function Header({ onGpuText }: { onGpuText?: (text: string) => void }) {
       }
       if (!cancelled) {
         setGpu(next);
-        onGpuText?.(next.text);
+        onText?.(next.text);
       }
     }
 
@@ -41,14 +41,9 @@ export function Header({ onGpuText }: { onGpuText?: (text: string) => void }) {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [busyCount, onGpuText]);
+    // onText es callback estable en la práctica (setState de App)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busyCount]);
 
-  return (
-    <header>
-      <h1>
-        <span className="wordmark-accent">flowxy</span> translator
-      </h1>
-      <div className={`gpu-stats${gpu.available ? "" : " gpu-off"}`}>{gpu.text}</div>
-    </header>
-  );
+  return gpu;
 }

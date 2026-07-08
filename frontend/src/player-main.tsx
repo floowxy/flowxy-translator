@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import PlayerApp from "./player/PlayerApp";
+import "./fonts.css";
 import "./styles.css";
 import "./player.css";
 

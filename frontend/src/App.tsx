@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { api } from "./api";
-import { Header } from "./components/Header";
+import { Hero } from "./components/Hero";
 import { HistorySection } from "./components/HistorySection";
 import { SourceSection } from "./components/SourceSection";
 import { MediaSection } from "./components/MediaSection";
@@ -68,7 +68,7 @@ export default function App() {
 
   return (
     <>
-      <Header onGpuText={setFooterGpu} />
+      <Hero onGpuText={setFooterGpu} />
 
       <HistorySection refreshKey={historyRefresh} onRestore={handleRestore} />
 
