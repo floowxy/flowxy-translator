@@ -364,11 +364,18 @@ async def transcribe_endpoint(req: TranscribeRequest):
     logger.info(f"Transcribiendo: {file_name}")
     try:
         async with _gpu_lock:
-            with timer("Transcription"):
-                result = await asyncio.to_thread(
-                    transcribe_file, file_path, language=req.language,
-                    progress_callback=_progress,
-                )
+            # Revalidar caché: otro request pudo generarla mientras esperábamos el lock
+            result = transcription_cache.get(cache_key) or _load_from_disk(
+                _transcription_cache_path(file_name)
+            )
+            if result:
+                logger.info("Transcripción en caché (generada durante la espera del lock)")
+            else:
+                with timer("Transcription"):
+                    result = await asyncio.to_thread(
+                        transcribe_file, file_path, language=req.language,
+                        progress_callback=_progress,
+                    )
 
         _task_progress[task_id] = 1.0
         _cache_put(transcription_cache, cache_key, result)
@@ -457,6 +464,16 @@ async def translate_transcript(req: TranslateTranscriptRequest):
     logger.info(f"Traduciendo {len(segments)} segmentos: {source_lang} → {req.target_lang}")
     try:
         async with _gpu_lock:
+            # Revalidar caché: otro request pudo generarla mientras esperábamos el lock
+            result = translation_cache.get(trans_cache_key) or _load_from_disk(
+                _translation_cache_path(file_name, req.target_lang)
+            )
+            if result:
+                logger.info("Traducción en caché (generada durante la espera del lock)")
+                _task_progress[task_id] = 1.0
+                _cache_put(translation_cache, trans_cache_key, result)
+                return result
+
             with timer("Translate segments"):
                 translated_segments = await asyncio.to_thread(
                     translate_segments,
@@ -530,9 +547,16 @@ async def export_endpoint(req: ExportRequest):
         if translation:
             segments = translation.get("segments", segments)
 
-    # Nombre base de archivo
+    # Nombre base de archivo — con sufijo para que el export traducido/bilingüe
+    # no sobreescriba al export del idioma original (y viceversa)
     base_name = Path(file_name).stem
-    output_path = EXPORTS_DIR / f"{base_name}.{req.format}"
+    if req.bilingual:
+        suffix = "_bilingual"
+    elif req.use_translation and translation:
+        suffix = f"_{translation.get('target_lang', 'translated')}"
+    else:
+        suffix = ""
+    output_path = EXPORTS_DIR / f"{base_name}{suffix}.{req.format}"
     
     try:
         if req.format == "srt":
@@ -580,7 +604,9 @@ async def export_endpoint(req: ExportRequest):
             "format": req.format,
             "path": str(output_path),
         }
-        
+
+    except HTTPException:
+        raise  # p.ej. formato no soportado (400) — no convertir en 500
     except Exception as e:
         logger.error(f"Error exportando: {e}")
         raise HTTPException(status_code=500, detail=str(e))

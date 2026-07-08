@@ -54,7 +54,10 @@ class RealtimeHandler:
             logger.info(f"[WS] Client {client_id} disconnected")
         except Exception as e:
             logger.error(f"[WS] Error with client {client_id}: {e}")
-            await self.send_error(websocket, str(e))
+            try:
+                await self.send_error(websocket, str(e))
+            except Exception:
+                pass  # el socket puede estar ya cerrado
         finally:
             # Cleanup
             if client_id in self.active_connections:
@@ -154,7 +157,10 @@ class RealtimeHandler:
             
         except Exception as e:
             logger.error(f"[WS] Error processing audio chunk: {e}", exc_info=True)
-            await self.send_error(websocket, f"Error processing audio: {str(e)}")
+            try:
+                await self.send_error(websocket, f"Error processing audio: {str(e)}")
+            except Exception:
+                pass  # el socket puede estar ya cerrado
     
     async def send_status(self, websocket: WebSocket, message: str):
         """Send status message to client"""

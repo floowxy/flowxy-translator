@@ -218,11 +218,18 @@ async def merge_tts_segments(segment_files: List[Dict], output_path: Path, temp_
 
 
 async def generate_silence(output_path: Path, duration: float) -> None:
-    """Genera un archivo de audio silencioso sin bloquear el event loop."""
+    """
+    Genera un archivo de audio silencioso sin bloquear el event loop.
+
+    El formato debe coincidir con el output de edge-tts (MP3 24kHz mono):
+    el concat posterior usa -c copy, y mezclar sample rates/canales distintos
+    produce timestamps corruptos y audio desincronizado.
+    """
     cmd = [
         "ffmpeg",
         "-f", "lavfi",
-        "-i", f"anullsrc=r=44100:cl=stereo:d={duration}",
+        "-i", f"anullsrc=r=24000:cl=mono:d={duration}",
+        "-b:a", "48k",
         "-y",
         str(output_path),
     ]
