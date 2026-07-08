@@ -1,0 +1,196 @@
+/* Estilos de componentes React que antes vivían inline en index.html/app.js */
+
+.section-desc {
+  color: var(--text-secondary);
+  margin-bottom: 1.5rem;
+  font-size: 0.95rem;
+}
+
+/* Variantes de info-box (la base en styles.css es verde/success) */
+.info-box.error {
+  background: rgba(239, 68, 68, 0.1);
+  border-left-color: var(--accent-error);
+}
+
+.info-box.warning {
+  background: rgba(251, 191, 36, 0.1);
+  border-left-color: #fbbf24;
+}
+
+/* Drop zone de upload local */
+.drop-zone {
+  border: 2px dashed rgba(102, 126, 234, 0.35);
+  border-radius: var(--radius-md);
+  padding: 1.5rem 1rem;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.drop-zone.drag-over {
+  border-color: rgba(102, 126, 234, 0.8);
+  background: rgba(102, 126, 234, 0.08);
+}
+
+.drop-zone-cta {
+  color: var(--accent-cyan);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+/* Link al reproductor con subtítulos */
+.player-link-box {
+  margin-top: 1.5rem;
+  background: var(--gradient-primary);
+  border: none;
+  border-left: none;
+  padding: 0;
+}
+
+.player-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  text-decoration: none;
+  color: white;
+  padding: 1.5rem;
+  text-align: center;
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.checkbox-hint {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  margin-left: 3rem;
+  margin-top: 0.5rem;
+}
+
+/* Progreso de export de video */
+.export-progress {
+  background: rgba(30, 35, 71, 0.6);
+  backdrop-filter: blur(10px);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-lg);
+  margin-top: var(--spacing-lg);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.export-progress-text {
+  color: var(--accent-cyan);
+  font-weight: 700;
+  font-size: 1rem;
+}
+
+.export-progress-track {
+  width: 100%;
+  background: rgba(10, 14, 39, 0.8);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  padding: 2px;
+}
+
+.download-final-link {
+  display: block;
+  margin-top: 1rem;
+  padding: 1rem;
+  background: var(--accent-success);
+  color: white;
+  text-align: center;
+  text-decoration: none;
+  border-radius: var(--radius-md);
+  font-weight: bold;
+}
+
+/* Historial de archivos procesados */
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.history-entry {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.9rem 1rem;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.history-entry:hover {
+  background: rgba(102, 126, 234, 0.12);
+  border-color: rgba(102, 126, 234, 0.4);
+}
+
+.history-icon {
+  font-size: 1.8rem;
+  flex-shrink: 0;
+}
+
+.history-body {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.history-title {
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-meta {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  margin-top: 0.2rem;
+}
+
+.history-preview {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+  font-style: italic;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.history-restore-hint {
+  color: var(--accent-cyan);
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
+
+.delete-btn {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: var(--accent-error);
+  border-radius: var(--radius-sm);
+  padding: 0.25rem 0.5rem;
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: all 0.2s;
+  line-height: 1;
+}
+
+.delete-btn:hover {
+  background: rgba(239, 68, 68, 0.3);
+}

@@ -202,7 +202,10 @@ pip install -r requirements.txt
 # 5. Verificar GPU
 python -c "import torch; print('CUDA:', torch.cuda.is_available())"
 
-# 6. Arrancar
+# 6. Compilar el frontend (React + Vite; Node solo se usa para el build)
+cd frontend && npm install && npm run build && cd ..
+
+# 7. Arrancar
 uvicorn backend.main:app --host 0.0.0.0 --port 9000 --reload
 ```
 
@@ -223,13 +226,20 @@ python -m venv .venv
 pip install --upgrade pip
 pip install -r requirements.txt
 
-# 3. Arrancar
+# 3. Compilar el frontend (requiere Node.js)
+cd frontend; npm install; npm run build; cd ..
+
+# 4. Arrancar
 uvicorn backend.main:app --host 0.0.0.0 --port 9000 --reload
 ```
 
 Luego abre `http://localhost:9000`.
 
 > Los modelos (~4 GB en total) se descargan automáticamente en `models/` la primera vez.
+>
+> **Desarrollo del frontend**: `cd frontend && npm run dev` levanta Vite en `:5173`
+> con hot-reload, proxeando la API al backend en `:9000`. El build compilado en
+> `frontend/dist/` está commiteado, así que solo necesitas Node si vas a modificar la UI.
 
 ---
 
@@ -373,9 +383,7 @@ flowxy-translator/
 │   │   └── video_export.py        # FFmpeg subtítulos + Edge-TTS
 │   │
 │   ├── websocket/
-│   │   ├── realtime_handler.py    # Lógica WebSocket (extensión Chrome)
-│   │   ├── ws_protocol.py
-│   │   └── ws_server.py
+│   │   └── realtime_handler.py    # Lógica WebSocket (extensión Chrome)
 │   │
 │   └── utils/
 │       ├── gpu_stats.py           # VRAM, CUDA info
@@ -383,12 +391,17 @@ flowxy-translator/
 │       ├── timers.py
 │       └── chunker.py
 │
-├── frontend/
-│   ├── index.html                 # UI principal (glassmorphism)
-│   ├── player.html                # Reproductor con subtítulos en tiempo real
-│   ├── app.js                     # Lógica y llamadas a la API
-│   ├── video_player.js            # Player + sincronización de subtítulos
-│   └── styles.css
+├── frontend/                      # React + Vite + TypeScript
+│   ├── index.html                 # Entry de la UI principal
+│   ├── player.html                # Entry del reproductor
+│   ├── vite.config.ts             # Dev proxy a :9000 + build multi-página
+│   ├── src/
+│   │   ├── App.tsx                # Orquestación del flujo (estado global)
+│   │   ├── api.ts                 # Cliente HTTP tipado (contrato con FastAPI)
+│   │   ├── types.ts               # Tipos compartidos de la API
+│   │   ├── components/            # Una sección del flujo por componente
+│   │   └── player/PlayerApp.tsx   # Reproductor + sincronización de subtítulos
+│   └── dist/                      # Build servido por FastAPI (npm run build)
 │
 ├── downloads/                     # Videos/audios descargados
 ├── exports/                       # MP4, SRT, VTT, JSON exportados

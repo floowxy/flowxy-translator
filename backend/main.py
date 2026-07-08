@@ -61,9 +61,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Montar frontend estático
+# Montar frontend compilado (React + Vite → frontend/dist)
 FRONTEND_DIR = BASE_DIR / "frontend"
-app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
+FRONTEND_DIST = FRONTEND_DIR / "dist"
+if (FRONTEND_DIST / "assets").exists():
+    app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="assets")
+
+_BUILD_MISSING_MSG = (
+    "Frontend no compilado. Ejecuta:\n\n  cd frontend && npm install && npm run build\n"
+)
+
+
+def _serve_page(page: str):
+    path = FRONTEND_DIST / page
+    if not path.exists():
+        return Response(_BUILD_MISSING_MSG, status_code=503, media_type="text/plain")
+    return FileResponse(path)
 
 
 # ============================================
@@ -183,14 +196,14 @@ def _ytdlp_download(ydl_opts: dict, url: str) -> tuple:
 
 @app.get("/")
 async def root():
-    """Servir frontend index.html"""
-    return FileResponse(FRONTEND_DIR / "index.html")
+    """Servir frontend index.html (build de Vite)"""
+    return _serve_page("index.html")
 
 
 @app.get("/player")
 async def player():
-    """Servir video player page"""
-    return FileResponse(FRONTEND_DIR / "player.html")
+    """Servir video player page (build de Vite)"""
+    return _serve_page("player.html")
 
 
 @app.get("/favicon.ico", include_in_schema=False)
