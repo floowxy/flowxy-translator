@@ -2,30 +2,36 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { api } from "../api";
 import { getBusyCount, subscribeBusy } from "../busy";
 
-/** Header con GPU stats — polling adaptativo: 4s con tareas activas, 30s idle. */
+interface GpuState {
+  text: string;
+  available: boolean;
+}
+
+/** Top bar con wordmark y estado de GPU — polling adaptativo: 4s ocupado, 30s idle. */
 export function Header({ onGpuText }: { onGpuText?: (text: string) => void }) {
   const busyCount = useSyncExternalStore(subscribeBusy, getBusyCount);
-  const [gpuText, setGpuText] = useState("Cargando GPU...");
+  const [gpu, setGpu] = useState<GpuState>({ text: "GPU …", available: true });
 
   useEffect(() => {
     let cancelled = false;
 
     async function fetchStats() {
-      let text: string;
+      let next: GpuState;
       try {
         const data = await api.gpuStats();
         if (data.cuda?.available) {
           const memPercent = data.gpu.memory?.percent ?? 0;
-          text = `GPU: ${data.gpu.name ?? "Unknown"} | Memory: ${memPercent}%`;
+          const name = (data.gpu.name ?? "GPU").replace("NVIDIA GeForce ", "");
+          next = { text: `${name} · ${memPercent}%`, available: true };
         } else {
-          text = "GPU: No disponible (usando CPU)";
+          next = { text: "CPU (sin CUDA)", available: false };
         }
       } catch {
-        text = "GPU: Error";
+        next = { text: "GPU sin datos", available: false };
       }
       if (!cancelled) {
-        setGpuText(text);
-        onGpuText?.(text);
+        setGpu(next);
+        onGpuText?.(next.text);
       }
     }
 
@@ -39,9 +45,10 @@ export function Header({ onGpuText }: { onGpuText?: (text: string) => void }) {
 
   return (
     <header>
-      <h1>🚀 flowxy-translator</h1>
-      <p className="subtitle">Transcripción y Traducción con GPU | Whisper + NLLB-200</p>
-      <div className="gpu-stats">{gpuText}</div>
+      <h1>
+        <span className="wordmark-accent">flowxy</span> translator
+      </h1>
+      <div className={`gpu-stats${gpu.available ? "" : " gpu-off"}`}>{gpu.text}</div>
     </header>
   );
 }

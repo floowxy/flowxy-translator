@@ -131,8 +131,9 @@ export default function PlayerApp() {
   return (
     <>
       <header>
-        <h1>🎬 Reproductor de Video</h1>
-        <p className="subtitle">Video con subtítulos traducidos en tiempo real</p>
+        <h1>
+          <span className="wordmark-accent">flowxy</span> reproductor
+        </h1>
       </header>
 
       <div className="video-container">
@@ -171,7 +172,7 @@ export default function PlayerApp() {
 
         <div className="controls-panel">
           <div className="control-group">
-            <label htmlFor="videoSelect">📹 Video:</label>
+            <label htmlFor="videoSelect">Video</label>
             <select
               id="videoSelect"
               value={selected}
@@ -185,7 +186,7 @@ export default function PlayerApp() {
               ))}
             </select>
 
-            <label htmlFor="subtitleMode">💬 Subtítulos:</label>
+            <label htmlFor="subtitleMode">Subtítulos</label>
             <select
               id="subtitleMode"
               value={mode}
@@ -198,7 +199,7 @@ export default function PlayerApp() {
             </select>
 
             <button className="btn-back" onClick={() => (location.href = "/")}>
-              ← Volver
+              ← Volver al inicio
             </button>
           </div>
 

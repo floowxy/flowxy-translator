@@ -2,8 +2,7 @@ import { useCallback, useState } from "react";
 import { api } from "./api";
 import { Header } from "./components/Header";
 import { HistorySection } from "./components/HistorySection";
-import { UploadSection } from "./components/UploadSection";
-import { DownloadSection } from "./components/DownloadSection";
+import { SourceSection } from "./components/SourceSection";
 import { MediaSection } from "./components/MediaSection";
 import { TranscribeSection } from "./components/TranscribeSection";
 import { TranslateSection } from "./components/TranslateSection";
@@ -17,7 +16,7 @@ export default function App() {
   const [transcription, setTranscription] = useState<TranscriptionResult | null>(null);
   const [translation, setTranslation] = useState<TranslationResult | null>(null);
   const [historyRefresh, setHistoryRefresh] = useState(0);
-  const [footerGpu, setFooterGpu] = useState("Cargando...");
+  const [footerGpu, setFooterGpu] = useState("…");
 
   const handleMediaReady = useCallback((fileName: string, type: MediaType) => {
     setCurrentFile(fileName);
@@ -74,8 +73,7 @@ export default function App() {
       <HistorySection refreshKey={historyRefresh} onRestore={handleRestore} />
 
       <div className="container">
-        <UploadSection onMediaReady={handleMediaReady} />
-        <DownloadSection onMediaReady={handleMediaReady} />
+        <SourceSection onMediaReady={handleMediaReady} />
         <MediaSection
           fileName={currentFile}
           mediaType={mediaType}
@@ -105,15 +103,11 @@ export default function App() {
       </div>
 
       <footer>
-        <p style={{ lineHeight: 1.8 }}>
-          Powered by <strong>Whisper</strong> + <strong>NLLB-200</strong> +{" "}
-          <strong>Edge-TTS</strong>
-          <br />
-          GPU: <span style={{ fontWeight: 600 }}>{footerGpu}</span>
-        </p>
-        <p style={{ marginTop: "1rem", fontSize: "0.8rem", opacity: 0.7 }}>
-          Made with ❤️ by flowxy
-        </p>
+        <span>
+          <strong>Whisper</strong> · <strong>NLLB-200</strong> · <strong>Edge-TTS</strong> — local,
+          acelerado por GPU
+        </span>
+        <span>{footerGpu}</span>
       </footer>
     </>
   );

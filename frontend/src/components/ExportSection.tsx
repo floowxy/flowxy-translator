@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api, triggerDownload } from "../api";
 import { InfoBox } from "./InfoBox";
+import { Section } from "./Section";
 import type { ExportFormat } from "../types";
 
 interface Props {
@@ -9,12 +10,7 @@ interface Props {
   enabled: boolean;
 }
 
-const FORMATS: { format: ExportFormat; label: string }[] = [
-  { format: "srt", label: "📄 Exportar SRT" },
-  { format: "vtt", label: "📄 Exportar VTT" },
-  { format: "txt", label: "📄 Exportar TXT" },
-  { format: "json", label: "📄 Exportar JSON" },
-];
+const FORMATS: ExportFormat[] = ["srt", "vtt", "txt", "json"];
 
 export function ExportSection({ fileName, hasTranslation, enabled }: Props) {
   const [bilingual, setBilingual] = useState(false);
@@ -28,28 +24,27 @@ export function ExportSection({ fileName, hasTranslation, enabled }: Props) {
       const useBilingual = format === "json" ? false : bilingual;
       const data = await api.exportFile(fileName, format, hasTranslation, useBilingual);
       triggerDownload(data.file_name);
-      setInfo({ kind: "success", text: `✓ Exportado: ${data.file_name}` });
+      setInfo({ kind: "success", text: `Exportado: ${data.file_name}` });
     } catch (e) {
-      setInfo({ kind: "error", text: `Error exportando: ${(e as Error).message}` });
+      setInfo({ kind: "error", text: `Error al exportar: ${(e as Error).message}` });
     }
   }
 
   return (
-    <section className="card">
-      <h2>💾 5. Exportar Subtítulos</h2>
-      <p className="section-desc">
-        Descarga los subtítulos en diferentes formatos para usar en reproductores de video o
-        editores.
-      </p>
+    <Section
+      step={5}
+      title="Exportar subtítulos"
+      desc="Descarga la transcripción o traducción para usar en reproductores y editores."
+    >
       <div className="export-buttons">
-        {FORMATS.map(({ format, label }) => (
+        {FORMATS.map((format) => (
           <button
             key={format}
             className="btn btn-tertiary"
             disabled={!enabled}
             onClick={() => handleExport(format)}
           >
-            {label}
+            {format.toUpperCase()}
           </button>
         ))}
       </div>
@@ -60,10 +55,10 @@ export function ExportSection({ fileName, hasTranslation, enabled }: Props) {
             checked={bilingual}
             onChange={(e) => setBilingual(e.target.checked)}
           />
-          <span style={{ fontWeight: 600 }}>Bilingüe (original + traducción)</span>
+          <span>Bilingüe — original y traducción juntos</span>
         </label>
       </div>
       {info && <InfoBox kind={info.kind}>{info.text}</InfoBox>}
-    </section>
+    </Section>
   );
 }

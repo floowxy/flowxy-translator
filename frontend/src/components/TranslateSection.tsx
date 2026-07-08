@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api, pollProgress } from "../api";
 import { tracked } from "../busy";
 import { InfoBox } from "./InfoBox";
+import { Section } from "./Section";
 import { LANGUAGES } from "../types";
 import type { TranslationResult } from "../types";
 
@@ -31,15 +32,15 @@ export function TranslateSection({
     const taskId = crypto.randomUUID();
     setLoading(true);
     setInfo(null);
-    setProgressText("Traduciendo... 0%");
+    setProgressText("Traduciendo… 0%");
 
     const stopPolling = pollProgress(taskId, (p) => {
       const pct = Math.round(p * 100);
       const done = Math.round(p * totalSegments);
       setProgressText(
         totalSegments
-          ? `Traduciendo... ${pct}% (${done}/${totalSegments} segmentos)`
-          : `Traduciendo... ${pct}%`,
+          ? `Traduciendo… ${pct}% (${done}/${totalSegments} segmentos)`
+          : `Traduciendo… ${pct}%`,
       );
     });
 
@@ -48,10 +49,10 @@ export function TranslateSection({
       onTranslated(data);
       setInfo({
         kind: "success",
-        text: `De ${data.source_lang} a ${data.target_lang} | Segmentos traducidos: ${data.segments.length}`,
+        text: `${data.source_lang} → ${data.target_lang} · ${data.segments.length} segmentos`,
       });
     } catch (e) {
-      setInfo({ kind: "error", text: `Error: ${(e as Error).message}` });
+      setInfo({ kind: "error", text: `Error al traducir: ${(e as Error).message}` });
     } finally {
       stopPolling();
       setLoading(false);
@@ -71,33 +72,23 @@ export function TranslateSection({
   }
 
   return (
-    <section className="card">
-      <h2>🌐 4. Traducción (NLLB AI)</h2>
-      <p className="section-desc">
-        Traduce el texto transcrito a cualquier idioma usando el modelo NLLB-200 de Meta con
-        aceleración GPU.
-      </p>
-      <div className="button-group" style={{ gap: "1rem", marginBottom: "1.5rem" }}>
+    <Section
+      step={4}
+      title="Traducción"
+      desc="NLLB-200 traduce por grupos de oraciones completas, con contexto entre grupos."
+    >
+      <div className="button-group" style={{ marginBottom: "1rem" }}>
         <button
-          className={`btn btn-secondary${loading ? " loading" : ""}`}
-          style={{ flex: 2, fontSize: "1rem", padding: "1rem" }}
+          className={`btn btn-primary${loading ? " loading" : ""}`}
+          style={{ flex: 2 }}
           disabled={!canTranslate || loading}
           onClick={runTranslation}
         >
-          🌍 TRADUCIR
-        </button>
-        <button
-          className="btn btn-tertiary"
-          title="Borra la caché y retraduce con el motor DP mejorado"
-          style={{ fontSize: "0.8rem", padding: "0.6rem 1rem", whiteSpace: "nowrap" }}
-          disabled={!translation || loading}
-          onClick={handleRetranslate}
-        >
-          ↺ Retranslate
+          Traducir
         </button>
         <select
           className="select-field"
-          style={{ flex: 1 }}
+          style={{ flex: 1, width: "auto" }}
           value={targetLang}
           onChange={(e) => setTargetLang(e.target.value)}
         >
@@ -107,15 +98,23 @@ export function TranslateSection({
             </option>
           ))}
         </select>
+        <button
+          className="btn btn-tertiary"
+          title="Borra la caché y vuelve a traducir desde cero"
+          disabled={!translation || loading}
+          onClick={handleRetranslate}
+        >
+          Retraducir
+        </button>
       </div>
       <textarea
         rows={10}
-        placeholder="La traducción aparecerá aquí..."
+        placeholder="La traducción aparecerá aquí"
         className="text-area"
         readOnly
         value={progressText ?? translation?.translated_text ?? ""}
       />
       {info && <InfoBox kind={info.kind}>{info.text}</InfoBox>}
-    </section>
+    </Section>
   );
 }

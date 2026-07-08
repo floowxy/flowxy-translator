@@ -1,32 +1,35 @@
-/* Estilos del reproductor (antes inline en player.html) */
+/* Reproductor — Studio Dark */
 
-body {
-  padding: 1rem;
+/* El header hereda 760px de styles.css; aquí se alinea con el video */
+header {
+  max-width: 1200px;
 }
 
 .video-container {
-  max-width: 1600px;
-  margin: 2rem auto;
-  padding: 0 1rem;
+  max-width: 1200px;
+  margin: 0 auto 2rem;
+  padding: 0 1.25rem;
 }
 
 .video-wrapper {
   position: relative;
   background: #000;
-  border-radius: var(--radius-xl);
+  border-radius: var(--radius);
   overflow: hidden;
-  box-shadow: var(--shadow-glow), var(--shadow-lg);
-  border: 1px solid rgba(102, 126, 234, 0.3);
+  border: 1px solid var(--border);
 }
 
 .video-wrapper video {
   width: 100%;
   display: block;
+  /* altura estable mientras carga el primer frame */
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
 }
 
 .subtitle-container {
   position: absolute;
-  bottom: 80px;
+  bottom: 72px;
   left: 0;
   right: 0;
   text-align: center;
@@ -35,144 +38,124 @@ body {
   z-index: 10;
 }
 
-/* Scopeado bajo .subtitle-container para no pisar el p.subtitle del header */
+/* Scopeado bajo .subtitle-container para no pisar otros usos de .subtitle */
 .subtitle-container .subtitle {
   display: inline-block;
-  background: rgba(0, 0, 0, 0.85);
-  backdrop-filter: blur(10px);
-  color: white;
-  padding: 0.75rem 2rem;
-  border-radius: var(--radius-md);
-  font-size: 1.3rem;
+  background: rgba(8, 8, 12, 0.88);
+  color: #fff;
+  padding: 0.6rem 1.4rem;
+  border-radius: var(--radius-sm);
+  font-size: 1.25rem;
   line-height: 1.5;
   max-width: 85%;
   word-wrap: break-word;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-weight: 550;
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .subtitle-container .subtitle.bilingual {
-  padding: 1rem 2rem;
+  padding: 0.8rem 1.4rem;
 }
 
 .subtitle-original {
   display: block;
-  margin-bottom: 0.5rem;
-  color: #fbbf24;
-  font-size: 1.1rem;
+  margin-bottom: 0.35rem;
+  color: var(--text-2);
+  font-size: 1.05rem;
 }
 
 .subtitle-translated {
   display: block;
-  color: #60a5fa;
+  color: #fff;
   font-size: 1.2rem;
 }
 
 .word-highlight {
-  color: #fbbf24;
-  text-shadow: 0 0 10px rgba(251, 191, 36, 0.5);
-  transition: color 0.08s, text-shadow 0.08s;
+  color: var(--accent-text);
 }
 
 .controls-panel {
-  background: var(--bg-card);
-  backdrop-filter: blur(20px);
-  padding: 2rem;
-  border-radius: var(--radius-xl);
-  margin-top: 2rem;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: var(--shadow-lg);
+  background: var(--surface);
+  padding: 1.25rem 1.5rem;
+  border-radius: var(--radius);
+  margin-top: 1rem;
+  border: 1px solid var(--border);
 }
 
 .control-group {
   display: flex;
-  gap: 1.5rem;
+  gap: 1.25rem;
   align-items: center;
   flex-wrap: wrap;
-  margin-bottom: 1.5rem;
 }
 
 .control-group label {
-  color: var(--text-secondary);
-  font-weight: 600;
-  font-size: 0.95rem;
+  color: var(--text-2);
+  font-size: 0.82rem;
+  font-weight: 550;
 }
 
 .controls-panel select {
-  background: rgba(30, 35, 71, 0.6);
-  backdrop-filter: blur(10px);
-  border: 1.5px solid rgba(255, 255, 255, 0.1);
-  border-radius: var(--radius-md);
-  padding: 0.75rem 1.25rem;
-  color: var(--text-primary);
-  font-size: 0.95rem;
-  font-weight: 500;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.55rem 0.9rem;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 0.85rem;
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: border-color 0.15s;
   min-width: 200px;
 }
 
-.controls-panel select:hover {
-  border-color: var(--accent-primary);
-  background: rgba(30, 35, 71, 0.8);
-}
-
+.controls-panel select:hover,
 .controls-panel select:focus {
   outline: none;
-  border-color: var(--accent-primary);
-  box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.15);
+  border-color: var(--accent);
 }
 
 .controls-panel select option {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
+  background: var(--surface-2);
 }
 
 .btn-back {
-  background: var(--gradient-primary);
-  border: none;
-  padding: 0.75rem 2rem;
-  font-weight: 700;
-  color: white;
-  border-radius: var(--radius-md);
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--border);
+  padding: 0.55rem 1.1rem;
+  font-weight: 600;
+  font-size: 0.82rem;
+  color: var(--text-2);
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: all var(--transition-base);
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
-  text-transform: uppercase;
-  font-size: 0.875rem;
-  letter-spacing: 0.02em;
+  transition: border-color 0.15s, color 0.15s;
 }
 
 .btn-back:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(102, 126, 234, 0.5);
+  border-color: var(--border-strong);
+  color: var(--text);
 }
 
 .status {
-  color: var(--text-secondary);
-  font-size: 0.95rem;
+  color: var(--text-2);
+  font-family: var(--mono);
+  font-size: 0.75rem;
   margin-top: 1rem;
-  padding: 1rem;
-  background: rgba(16, 185, 129, 0.1);
-  border-radius: var(--radius-md);
-  border-left: 4px solid var(--accent-success);
-  font-weight: 500;
+  padding: 0.6rem 0.9rem;
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--ok);
+  border-radius: var(--radius-sm);
+  font-variant-numeric: tabular-nums;
 }
 
 .error {
-  color: var(--accent-error);
-  background: rgba(239, 68, 68, 0.1);
-  padding: 1.25rem;
-  border-radius: var(--radius-md);
+  color: var(--err);
+  font-size: 0.82rem;
+  padding: 0.6rem 0.9rem;
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--err);
+  border-radius: var(--radius-sm);
   margin-top: 1rem;
-  border-left: 4px solid var(--accent-error);
-  font-weight: 600;
-}
-
-header {
-  margin-bottom: 1.5rem;
 }
 
 @media (max-width: 768px) {
@@ -192,6 +175,10 @@ header {
   .control-group {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .btn-back {
+    margin-left: 0;
   }
 
   .controls-panel select {

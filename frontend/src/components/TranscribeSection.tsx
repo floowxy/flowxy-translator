@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api, pollProgress } from "../api";
 import { tracked } from "../busy";
 import { InfoBox } from "./InfoBox";
+import { Section } from "./Section";
 import { LANGUAGES } from "../types";
 import type { TranscriptionResult } from "../types";
 
@@ -23,10 +24,10 @@ export function TranscribeSection({ fileName, transcription, onTranscribed }: Pr
     const taskId = crypto.randomUUID();
     setLoading(true);
     setInfo(null);
-    setProgressText("Transcribiendo... 0%");
+    setProgressText("Transcribiendo… 0%");
 
     const stopPolling = pollProgress(taskId, (p) => {
-      setProgressText(`Transcribiendo... ${Math.round(p * 100)}%`);
+      setProgressText(`Transcribiendo… ${Math.round(p * 100)}%`);
     });
 
     try {
@@ -35,11 +36,11 @@ export function TranscribeSection({ fileName, transcription, onTranscribed }: Pr
       setInfo({
         kind: "success",
         text:
-          `Idioma: ${data.language} | Duración: ${Math.round(data.duration)}s | ` +
-          `Segmentos: ${data.segments.length} | Caracteres: ${data.text.length}`,
+          `Idioma ${data.language} · ${Math.round(data.duration)}s · ` +
+          `${data.segments.length} segmentos · ${data.text.length.toLocaleString()} caracteres`,
       });
     } catch (e) {
-      setInfo({ kind: "error", text: `Error: ${(e as Error).message}` });
+      setInfo({ kind: "error", text: `Error al transcribir: ${(e as Error).message}` });
     } finally {
       stopPolling();
       setLoading(false);
@@ -48,27 +49,27 @@ export function TranscribeSection({ fileName, transcription, onTranscribed }: Pr
   }
 
   return (
-    <section className="card">
-      <h2>📝 3. Transcripción (Whisper AI)</h2>
-      <p className="section-desc">
-        Convierte el audio a texto usando el modelo Whisper de OpenAI con aceleración GPU.
-      </p>
-      <div className="button-group" style={{ gap: "1rem", marginBottom: "1.5rem" }}>
+    <Section
+      step={3}
+      title="Transcripción"
+      desc="Whisper convierte el audio en texto con timestamps por palabra, acelerado por GPU."
+    >
+      <div className="button-group" style={{ marginBottom: "1rem" }}>
         <button
-          className={`btn btn-secondary${loading ? " loading" : ""}`}
-          style={{ flex: 2, fontSize: "1rem", padding: "1rem" }}
+          className={`btn btn-primary${loading ? " loading" : ""}`}
+          style={{ flex: 2 }}
           disabled={!fileName || loading}
           onClick={handleTranscribe}
         >
-          🎤 TRANSCRIBIR AUDIO
+          Transcribir audio
         </button>
         <select
           className="select-field"
-          style={{ flex: 1 }}
+          style={{ flex: 1, width: "auto" }}
           value={language}
           onChange={(e) => setLanguage(e.target.value)}
         >
-          <option value="">Auto-detectar idioma</option>
+          <option value="">Detectar idioma</option>
           {LANGUAGES.map((l) => (
             <option key={l.code} value={l.code}>
               {l.label}
@@ -78,12 +79,12 @@ export function TranscribeSection({ fileName, transcription, onTranscribed }: Pr
       </div>
       <textarea
         rows={10}
-        placeholder="La transcripción aparecerá aquí..."
+        placeholder="La transcripción aparecerá aquí"
         className="text-area"
         readOnly
         value={progressText ?? transcription?.text ?? ""}
       />
       {info && <InfoBox kind={info.kind}>{info.text}</InfoBox>}
-    </section>
+    </Section>
   );
 }

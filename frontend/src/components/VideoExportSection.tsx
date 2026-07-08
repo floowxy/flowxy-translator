@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api, exportDownloadUrl, pollProgress } from "../api";
 import { tracked } from "../busy";
 import { InfoBox } from "./InfoBox";
+import { Section } from "./Section";
 import type { VideoExportResult } from "../types";
 
 interface Props {
@@ -18,10 +19,10 @@ export function VideoExportSection({ fileName, enabled }: Props) {
 
   function progressLabel(p: number): string {
     const pct = Math.round(p * 100);
-    if (p < 0.05) return "Generando subtítulos SRT...";
-    if (p < 0.75) return `Quemando subtítulos... ${pct}%`;
-    if (includeTts && p < 0.93) return `Generando audio TTS... ${pct}%`;
-    return `Finalizando... ${pct}%`;
+    if (p < 0.05) return "Generando subtítulos SRT…";
+    if (p < 0.75) return `Quemando subtítulos… ${pct}%`;
+    if (includeTts && p < 0.93) return `Generando audio TTS… ${pct}%`;
+    return `Finalizando… ${pct}%`;
   }
 
   async function handleExport() {
@@ -48,66 +49,57 @@ export function VideoExportSection({ fileName, enabled }: Props) {
   }
 
   return (
-    <section className="card">
-      <h2>🎬 6. Generar Video Final con Subtítulos</h2>
-      <p className="section-desc" style={{ lineHeight: 1.7 }}>
-        Crea un nuevo video con subtítulos integrados permanentemente (quemados) y opcionalmente
-        con audio TTS. El video resultante será compatible con cualquier reproductor.
-      </p>
-
-      <div className="checkbox-group" style={{ marginBottom: "2rem" }}>
+    <Section
+      step={6}
+      title="Video final"
+      desc="Genera un MP4 con los subtítulos quemados, compatible con cualquier reproductor."
+    >
+      <div className="checkbox-group" style={{ marginBottom: "1rem" }}>
         <label>
           <input
             type="checkbox"
             checked={includeTts}
             onChange={(e) => setIncludeTts(e.target.checked)}
           />
-          <span style={{ fontSize: "1rem", fontWeight: 600 }}>
-            🎙️ Incluir audio TTS en español (doblaje completo)
-          </span>
+          <span>Doblaje TTS en español — reemplaza el audio original</span>
         </label>
-        <p className="checkbox-hint">
-          Genera voz en español y reemplaza el audio original (tarda más tiempo)
-        </p>
+        <p className="checkbox-hint">Tarda más: genera la voz y sincroniza el audio completo</p>
       </div>
 
       <button
         className="btn btn-primary"
-        style={{ width: "100%", fontSize: "1rem", padding: "1.2rem" }}
+        style={{ width: "100%" }}
         disabled={!enabled || loading}
         onClick={handleExport}
       >
-        🎬 GENERAR VIDEO CON SUBTÍTULOS
+        Generar video con subtítulos
       </button>
 
       {loading && (
         <div className="export-progress">
-          <div style={{ marginBottom: "0.75rem" }}>
+          <div style={{ marginBottom: "0.6rem" }}>
             <span className="export-progress-text">{progressLabel(progress)}</span>
           </div>
           <div className="export-progress-track">
-            <div
-              id="export-progress-bar"
-              style={{ width: `${Math.round(progress * 100)}%` }}
-            />
+            <div id="export-progress-bar" style={{ width: `${Math.round(progress * 100)}%` }} />
           </div>
         </div>
       )}
 
       {result && (
         <InfoBox kind="success">
-          Video generado: {result.file_name} ({(result.size_bytes / 1024 / 1024).toFixed(2)} MB) —{" "}
-          {result.includes_tts ? "Con TTS" : "Sin TTS"}
+          {result.file_name} · {(result.size_bytes / 1024 / 1024).toFixed(1)} MB ·{" "}
+          {result.includes_tts ? "con TTS" : "sin TTS"}
           <a
             href={exportDownloadUrl(result.file_name)}
             download={result.file_name}
             className="download-final-link"
           >
-            ⬇️ DESCARGAR VIDEO FINAL
+            Descargar video final
           </a>
         </InfoBox>
       )}
       {error && <InfoBox kind="error">Error: {error}</InfoBox>}
-    </section>
+    </Section>
   );
 }
