@@ -127,6 +127,16 @@ function hideInfo(element) {
   element.classList.add("hidden");
 }
 
+// Escapa texto para insertarlo de forma segura en HTML (contenido y atributos)
+function esc(text) {
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 // ============================================
 // PROGRESS POLLING
 // ============================================
@@ -719,13 +729,13 @@ async function loadHistory() {
       const mins = Math.round(entry.duration / 60);
       const transLabel = entry.translations.length ? `· ✓ ${entry.translations.join(", ")}` : "";
       const icon = entry.media_type === "video" ? "🎬" : "🎵";
-      const preview = entry.text_preview ? `"${entry.text_preview}…"` : "";
+      const preview = entry.text_preview ? `"${esc(entry.text_preview)}…"` : "";
 
       return `
         <div class="history-entry"
-             data-filename="${entry.file_name.replace(/"/g, "&quot;")}"
-             data-mediatype="${entry.media_type}"
-             data-translations="${JSON.stringify(entry.translations).replace(/"/g, "&quot;")}"
+             data-filename="${esc(entry.file_name)}"
+             data-mediatype="${esc(entry.media_type)}"
+             data-translations="${esc(JSON.stringify(entry.translations))}"
              style="display:flex; align-items:center; gap:1rem; padding:0.9rem 1rem;
                     background:rgba(255,255,255,0.04); border-radius:var(--radius-md);
                     border:1px solid rgba(255,255,255,0.08); cursor:pointer;
@@ -735,9 +745,9 @@ async function loadHistory() {
           <div style="font-size:1.8rem;flex-shrink:0;">${icon}</div>
           <div style="flex:1;min-width:0;overflow:hidden;">
             <div style="font-weight:600;font-size:0.875rem;color:var(--text-primary);
-                        white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${entry.file_name}</div>
+                        white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(entry.file_name)}</div>
             <div style="font-size:0.78rem;color:var(--text-secondary);margin-top:0.2rem;">
-              ${entry.language.toUpperCase()} · ${mins} min · ${entry.segments} seg ${transLabel}
+              ${esc(entry.language.toUpperCase())} · ${mins} min · ${entry.segments} seg ${transLabel}
             </div>
             ${preview ? `<div style="font-size:0.78rem;color:var(--text-muted);margin-top:0.15rem;
                               font-style:italic;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
@@ -746,7 +756,7 @@ async function loadHistory() {
           <div style="display:flex;align-items:center;gap:0.5rem;flex-shrink:0;">
             <span style="color:var(--accent-cyan);font-size:0.85rem;opacity:0.7;">Restaurar →</span>
             <button class="delete-btn"
-                    data-filename="${entry.file_name.replace(/"/g, "&quot;")}"
+                    data-filename="${esc(entry.file_name)}"
                     title="Borrar archivo"
                     style="background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.3);
                            color:var(--accent-error);border-radius:var(--radius-sm);

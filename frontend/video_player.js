@@ -50,21 +50,42 @@ function setupEventListeners() {
 
 async function loadAvailableVideos() {
     try {
-        const fileName = localStorage.getItem('lastDownloadedFile');
-        const mediaType = localStorage.getItem('lastMediaType');
         const select = document.getElementById('videoSelect');
+        const lastFile = localStorage.getItem('lastDownloadedFile');
 
-        if (fileName && mediaType === 'video') {
-            const option = document.createElement('option');
-            option.value = fileName;
-            option.textContent = decodeURIComponent(fileName);
-            option.selected = true;
-            select.appendChild(option);
-
-            await loadVideo(fileName);
-        } else {
-            showStatus('No hay videos disponibles. Descarga un video primero desde la página principal.');
+        // Todos los videos procesados (con transcripción) desde el historial
+        let videos = [];
+        try {
+            const resp = await fetch(`${API_BASE}/api/history`);
+            const data = await resp.json();
+            videos = (data.entries || []).filter((e) => e.media_type === 'video');
+        } catch {
+            // Historial no disponible — fallback a localStorage
         }
+
+        if (videos.length === 0 && lastFile && localStorage.getItem('lastMediaType') === 'video') {
+            videos = [{ file_name: lastFile }];
+        }
+
+        if (videos.length === 0) {
+            showStatus('No hay videos disponibles. Descarga un video primero desde la página principal.');
+            return;
+        }
+
+        for (const v of videos) {
+            const option = document.createElement('option');
+            option.value = v.file_name;
+            option.textContent = v.file_name;
+            select.appendChild(option);
+        }
+
+        // Preseleccionar el último usado si sigue disponible; si no, el primero
+        const initial = videos.some((v) => v.file_name === lastFile)
+            ? lastFile
+            : videos[0].file_name;
+        select.value = initial;
+
+        await loadVideo(initial);
     } catch (error) {
         showError('Error cargando lista de videos: ' + error.message);
     }
@@ -84,6 +105,10 @@ async function loadVideo(fileName) {
         const video = document.getElementById('videoPlayer');
         video.src = `${API_BASE}/video/${encodeURIComponent(fileName)}`;
         currentVideo = fileName;
+
+        // Recordar la selección para la próxima visita y la página principal
+        localStorage.setItem('lastDownloadedFile', fileName);
+        localStorage.setItem('lastMediaType', 'video');
 
         // Load subtitles from new API endpoint
         await loadSubtitles(fileName);
@@ -282,6 +307,7 @@ function showStatus(message) {
     const statusDiv = document.getElementById('status');
     const errorDiv = document.getElementById('error');
     statusDiv.textContent = message;
+    statusDiv.style.display = 'block';
     errorDiv.style.display = 'none';
 }
 
