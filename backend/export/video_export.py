@@ -146,7 +146,22 @@ async def generate_tts_audio(
     voice: str = "es-ES-AlvaroNeural",
     rate: str = "+0%",
 ) -> Path:
-    """Genera audio TTS en paralelo (asyncio.gather + semáforo) y concatena con FFmpeg."""
+    """
+    Genera audio TTS sincronizado con los timestamps de los segmentos.
+
+    Sincronización:
+    1. Consolidar: el DP grouper asigna la misma traducción a todos los
+       segmentos de un grupo — sin fusionar, la voz repetiría cada oración
+       una vez por segmento.
+    2. Generar cada clip con edge-tts (paralelo, semáforo de 5).
+    3. Ajustar cada clip a EXACTAMENTE la duración de su intervalo
+       (atempo si el español es más largo, silencio de relleno si es más
+       corto) — así el timeline es exacto en cada frontera y no hay deriva
+       acumulada con los subtítulos.
+    4. Concatenar clips + silencios de los huecos entre frases.
+    """
+    from backend.export.srt_exporter import consolidate_segments
+
     try:
         import edge_tts
     except ImportError:
@@ -156,30 +171,38 @@ async def generate_tts_audio(
     temp_dir = output_path.parent / "temp_tts"
     temp_dir.mkdir(exist_ok=True)
 
-    logger.info(f"Generando audio TTS para {len(segments)} segmentos (paralelo)...")
+    # Fusiona segmentos consecutivos con la misma traducción (sin dividir:
+    # max_duration_s enorme desactiva el split, que solo aplica a subtítulos)
+    merged = consolidate_segments(segments, use_translation=True, max_duration_s=float("inf"))
+    logger.info(f"Generando TTS: {len(segments)} segmentos → {len(merged)} frases")
 
     semaphore = asyncio.Semaphore(5)  # máx 5 conexiones simultáneas a edge-tts
 
     async def _gen_one(i: int, seg: dict) -> Optional[Dict]:
         text = seg.get("translated_text", seg.get("text", "")).strip()
-        if not text:
+        target_dur = float(seg.get("end", 0)) - float(seg.get("start", 0))
+        if not text or target_dur <= 0.05:
             return None
-        temp_file = temp_dir / f"segment_{i:04d}.mp3"
+
+        raw_file = temp_dir / f"raw_{i:04d}.mp3"
+        fit_file = temp_dir / f"fit_{i:04d}.mp3"
+
         async with semaphore:
             communicate = edge_tts.Communicate(text, voice, rate=rate)
-            await communicate.save(str(temp_file))
+            await communicate.save(str(raw_file))
+
+        await asyncio.to_thread(_fit_clip_to_duration, raw_file, fit_file, target_dur)
         return {
-            "file": temp_file,
-            "start": seg.get("start", 0),
-            "end": seg.get("end", 0),
-            "duration": seg.get("end", 0) - seg.get("start", 0),
+            "file": fit_file,
+            "start": float(seg.get("start", 0)),
+            "end": float(seg.get("end", 0)),
         }
 
     try:
-        results = await asyncio.gather(*[_gen_one(i, seg) for i, seg in enumerate(segments)])
+        results = await asyncio.gather(*[_gen_one(i, seg) for i, seg in enumerate(merged)])
         segment_files = [r for r in results if r is not None]
 
-        logger.info(f"✓ {len(segment_files)} segmentos TTS generados")
+        logger.info(f"✓ {len(segment_files)} frases TTS generadas y ajustadas al timeline")
 
         await merge_tts_segments(segment_files, output_path, temp_dir)
     finally:
@@ -188,6 +211,40 @@ async def generate_tts_audio(
             shutil.rmtree(temp_dir, ignore_errors=True)
 
     return output_path
+
+
+def _fit_clip_to_duration(in_path: Path, out_path: Path, target_dur: float) -> None:
+    """
+    Reencoda un clip TTS para que dure EXACTAMENTE target_dur segundos.
+
+    - Si el clip es más largo: se acelera con atempo (hasta 3.4x en dos
+      etapas; el español doblado suele necesitar 1.1–1.6x).
+    - Si es más corto: se mantiene el ritmo natural y apad rellena con
+      silencio hasta el objetivo.
+    - `-t target` garantiza el corte exacto en ambos casos.
+
+    Salida en el mismo formato que generate_silence (MP3 24kHz mono) para
+    que el concat con -c copy no corrompa timestamps.
+    """
+    actual = _probe_duration(in_path)
+
+    filters = []
+    if actual > target_dur > 0:
+        tempo = min(actual / target_dur, 3.4)
+        if tempo > 2.0:  # atempo acepta [0.5, 2.0] por instancia — encadenar
+            filters.extend(["atempo=2.0", f"atempo={tempo / 2.0:.4f}"])
+        else:
+            filters.append(f"atempo={tempo:.4f}")
+    filters.append("apad")
+
+    cmd = [
+        "ffmpeg", "-i", str(in_path),
+        "-filter:a", ",".join(filters),
+        "-t", f"{target_dur:.3f}",
+        "-ar", "24000", "-ac", "1", "-b:a", "48k",
+        "-y", str(out_path),
+    ]
+    subprocess.run(cmd, capture_output=True, check=True)
 
 
 def _ffconcat_path(p: Path) -> str:
@@ -256,11 +313,15 @@ def replace_video_audio(
         "ffmpeg",
         "-i", str(video_path),
         "-i", str(audio_path),
-        "-c:v", "copy",  # Copiar video (ya tiene subtítulos)
-        "-c:a", "aac",   # Encodear audio a AAC
+        "-c:v", "copy",   # Copiar video (ya tiene subtítulos)
+        "-c:a", "aac",    # Encodear audio a AAC
         "-map", "0:v:0",  # Video del primer input
         "-map", "1:a:0",  # Audio del segundo input
-        "-shortest",  # Terminar cuando el más corto termine
+        # apad extiende el audio con silencio indefinidamente y -shortest
+        # corta en el fin del VIDEO: sin apad, un TTS más corto que el video
+        # truncaría el video entero.
+        "-af", "apad",
+        "-shortest",
         "-y",
         str(output_path)
     ]
