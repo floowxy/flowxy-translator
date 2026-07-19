@@ -25,52 +25,114 @@
 
 ## ¿Qué es esto?
 
-Flowxy-Translator convierte videos de YouTube en material de estudio interactivo. Descarga, transcribe y traduce con GPU, luego te entrega un reproductor con subtítulos en tiempo real o un video MP4 con subtítulos quemados y doblaje en español.
+Flowxy-Translator convierte videos de YouTube (o archivos locales) en material de estudio interactivo. Descarga, transcribe y traduce con GPU, y te entrega un reproductor con subtítulos sincronizados palabra a palabra o un video MP4 con subtítulos quemados de calidad profesional.
 
 Pensado para **desarrolladores que aprenden inglés técnico** leyendo código mientras escuchan al autor.
+
+Todo corre **100% en local**: los modelos viven en tu disco y ningún dato sale de tu máquina (salvo la descarga del video y el TTS opcional de Edge).
 
 ---
 
 ## Pipeline de procesamiento
 
 ```
-URL de YouTube
-      │
-      ▼
-┌─────────────┐     yt-dlp        ┌──────────────┐
-│   Download  │ ─────────────────▶│  downloads/  │
-│  (video o   │   webm / audio    │  {id}_video  │
-│   audio)    │                   │  {id}_audio  │
-└─────────────┘                   └──────┬───────┘
-                                         │
-                                         ▼
-                                  ┌──────────────┐     float16 FP
-                                  │   Whisper    │ ◀── beam=5, VAD
-                                  │   medium     │     best_of=5
-                                  │   GPU ↔ CPU  │
-                                  └──────┬───────┘
-                                         │  segmentos con timestamps
-                                         ▼
-                                  ┌──────────────┐     batch=16
-                                  │  NLLB 1.3B   │ ◀── beam=4
-                                  │  Transformers│     float16
-                                  │   GPU ↔ CPU  │
-                                  └──────┬───────┘
-                                         │
-                  ┌──────────────────────┼──────────────────────┐
-                  ▼                      ▼                      ▼
-          ┌──────────────┐      ┌──────────────┐      ┌──────────────┐
-          │  Reproductor │      │  Video MP4   │      │  Subtítulos  │
-          │  en tiempo   │      │  subtítulos  │      │  SRT / VTT   │
-          │    real      │      │  + TTS audio │      │  JSON / TXT  │
-          └──────────────┘      └──────────────┘      └──────────────┘
+URL de YouTube  ·  Archivo local (MP4/MKV/WebM/MP3…)
+      │                    │
+      ▼                    ▼
+┌─────────────┐     yt-dlp / upload      ┌──────────────┐
+│   Download  │ ────────────────────────▶│  downloads/  │
+│  o Upload   │                          │  {id}_video  │
+└─────────────┘                          └──────┬───────┘
+                                                │
+                                                ▼
+                                         ┌──────────────┐   word_timestamps=True
+                                         │   Whisper    │◀─ beam=5, best_of=5
+                                         │   medium     │   no_speech=0.6
+                                         │   GPU ↔ CPU  │   float16
+                                         └──────┬───────┘
+                                                │ segmentos + timestamps por PALABRA
+                                                ▼
+                                         ┌──────────────┐   DP grouper: agrupa
+                                         │  NLLB 1.3B   │◀─ segmentos en oraciones
+                                         │  context-    │   completas + memoria
+                                         │  aware       │   inter-grupo
+                                         │  GPU ↔ CPU   │   beam=5, float16
+                                         └──────┬───────┘
+                                                │ traducción por grupo semántico
+                         ┌──────────────────────┼──────────────────────┐
+                         ▼                      ▼                      ▼
+                 ┌──────────────┐      ┌──────────────┐      ┌──────────────┐
+                 │  Reproductor │      │  Video MP4   │      │  Subtítulos  │
+                 │  word        │      │  cues 42×2   │      │  SRT / VTT   │
+                 │  highlight   │      │  alineados   │      │  JSON / TXT  │
+                 │              │      │  al habla    │      │  bilingüe    │
+                 └──────────────┘      └──────────────┘      └──────────────┘
 ```
+
+Cada resultado intermedio se guarda en **caché de dos capas** (RAM + disco), así que repetir cualquier paso es instantáneo, incluso tras reiniciar el servidor.
+
+---
+
+## Traducción con contexto — DP grouper
+
+Traducir subtítulo a subtítulo destroza la calidad: Whisper corta el habla en trozos de ~5 s que rara vez son oraciones completas. En su lugar, el **DP grouper** (`_dp_group_segments` en `nllb_engine.py`) agrupa los segmentos en unidades semánticas antes de traducir, con 4 señales de cierre de grupo:
+
+1. El texto termina en `.!?` → oración completa
+2. El grupo acumula 60 palabras → evitar truncado del modelo
+3. El siguiente segmento abre con conector (`"However,"`, `"But "`, `"Now "`, …) → nuevo pensamiento
+4. Silencio ≥ 0.5 s entre segmentos → pausa natural
+
+Cada grupo se traduce como texto unificado, y el texto del grupo anterior se pasa como **contexto inter-grupo** (pronombres, referencias, continuidad del discurso). Un post-procesado limpia los artefactos típicos de NLLB (`"hola ."` → `"hola."`, artículos duplicados, espacios múltiples).
+
+`NLLB_CONTEXT_AWARE = False` en `config.py` desactiva todo esto y usa batch puro (más rápido, menos calidad).
+
+---
+
+## Subtítulos alineados al habla
+
+El problema clásico de los subtítulos traducidos automáticamente: frases cortadas a la mitad, muros de texto y desfase con lo que el hablante dice. `build_translated_cues()` (`backend/export/srt_exporter.py`) lo resuelve reconstruyendo los cues desde cero:
+
+```
+Traducción del grupo (una o varias oraciones)
+      │
+      ▼  1. División por oraciones (.!?…); las largas se parten
+      │     balanceadas con preferencia por comas — NUNCA a
+      │     mitad de frase. Máx 84 chars (2 líneas × 42).
+      ▼
+┌────────────────────┬──────────────────┬─────────────────────┐
+│ "La gente lo ama   │ "sumergirse en   │ "raspar páginas web │
+│  por su versatili- │  la ciencia de   │  o simplemente..."  │
+│  dad, ..."         │  datos,"         │                     │
+└─────────┬──────────┴────────┬─────────┴──────────┬──────────┘
+          ▼                   ▼                    ▼
+      2. Cada cue se ancla al intervalo de las palabras FUENTE
+         que le corresponden (proporcional por caracteres sobre
+         los word timestamps de Whisper) → el subtítulo aparece
+         MIENTRAS el hablante dice esa parte.
+          │
+          ▼
+      3. Pase de legibilidad: duración mínima 1 s, extensión
+         hacia los silencios si hay mucho texto (CPS > 20),
+         cierre de micro-huecos, sin solapes.
+```
+
+Reglas de presentación (estándar de la industria):
+
+| Regla | Valor |
+|---|---|
+| Líneas por subtítulo | máx 2 |
+| Caracteres por línea | máx 42 |
+| Velocidad de lectura | ≤ 20 CPS (se extiende hacia pausas si se supera) |
+| Duración por cue | 1 – 6 s |
+| Cortes de texto | solo en límites de oración o cláusula |
+
+Este sistema se aplica al **video quemado**, al **SRT descargable** y al **VTT** cuando se exporta la traducción. Si un caché antiguo no trae word timestamps, se degrada a interpolación lineal sin romper nada.
 
 ---
 
 ## Gestión de VRAM — Offload automático GPU ↔ CPU
 
-Con 8 GB de VRAM (RTX 4060 Ti), Whisper medium (~1.5 GB) y NLLB 1.3B (~2.6 GB) no caben en GPU al mismo tiempo. El sistema los alterna automáticamente:
+Con 8 GB de VRAM (RTX 4060 Ti), Whisper medium (~1.5 GB) y NLLB 1.3B (~2.6 GB) se alternan automáticamente:
 
 ```
 VRAM (8 GB)
@@ -81,10 +143,23 @@ VRAM (8 GB)
 │  │  NLLB    (CPU)  │          │  NLLB    (GPU)  │
 │  └─────────────────┘          └─────────────────┘
 │         ▲                            ▲
-│         └── torch.cuda.empty_cache() cada cambio
+│         └── torch.cuda.empty_cache() en cada cambio
 ```
 
-Ambos modelos viven en RAM (CPU) desde el inicio. Al usar uno, el otro se mueve a CPU y se limpia la caché de CUDA.
+- **Precarga**: al arrancar, ambos modelos se cargan en RAM (`preload_to_cpu`) — el primer request no paga cold-start de carga desde disco.
+- **`gpu_lock`** (`backend/utils/gpu_lock.py`): mutex async compartido entre todos los endpoints REST y el WebSocket — serializa el acceso a GPU y evita OOM con requests concurrentes.
+- **Revalidación de caché tras el lock**: dos requests idénticos en paralelo no ejecutan Whisper/NLLB dos veces; el segundo encuentra el resultado ya cacheado.
+
+---
+
+## Caché en dos capas
+
+| Capa | Dónde | Qué guarda |
+|---|---|---|
+| RAM | dicts LRU (20 entradas c/u) | transcripciones y traducciones de la sesión |
+| Disco | `downloads/{stem}_transcription.json`<br>`downloads/{stem}_translation_{lang}.json` | sobrevive reinicios y `--reload` |
+
+Todos los endpoints siguen el patrón *memoria → disco*: si el resultado existe en cualquiera de las capas, se reutiliza. El historial (`/api/history`) restaura una sesión completa en <1 s.
 
 ---
 
@@ -92,74 +167,67 @@ Ambos modelos viven en RAM (CPU) desde el inicio. Al usar uno, el otro se mueve 
 
 | Característica | Detalle |
 |---|---|
-| **Descarga** | yt-dlp, solo video individual (no playlists), sufijo `_video` / `_audio` para no colisionar |
-| **Transcripción** | Whisper medium, VAD filter, beam search 5, FP16 en GPU |
-| **Traducción** | NLLB-200 1.3B, batch de 16 segmentos, beam 4, float16 |
-| **Reproductor** | Subtítulos en tiempo real, modos original / traducido / bilingüe |
-| **Export video** | Subtítulos quemados (FFmpeg), doblaje Edge-TTS opcional |
+| **Descarga** | yt-dlp, video individual (no playlists), sufijo `_video` / `_audio` |
+| **Upload local** | MP4, MKV, WebM, MP3… con drag & drop (`POST /api/upload`) |
+| **Transcripción** | Whisper medium, timestamps por palabra, filtrado de no-habla nativo |
+| **Traducción** | NLLB-200 1.3B context-aware con DP grouper y memoria inter-grupo |
+| **Reproductor** | Word highlighting sincronizado, modos original / traducido / bilingüe |
+| **Export video** | Subtítulos quemados con cues alineados al habla (42×2, CPS controlado) |
 | **Export texto** | SRT, VTT, JSON, TXT — simple o bilingüe |
+| **Doblaje TTS** | Edge-TTS opcional, clips ajustados exactamente al timeline *(experimental, en stand-by)* |
+| **Historial** | Lista de videos procesados con preview e idiomas; restaura sesión desde disco |
+| **Progreso real** | `GET /api/progress/{task_id}` — Whisper, NLLB y FFmpeg reportan avance real |
+| **Gestión** | Borrar archivos (`DELETE /api/files`), re-traducir limpiando caché |
+| **GPU stats** | Polling adaptativo: cada 4 s durante tareas, 30 s en idle |
 | **WebSocket** | Subtítulos en tiempo real para extensión de Chrome |
-| **Seguridad** | Path traversal protection, CORS restringido al mismo origen |
-| **Cache** | Transcripciones y traducciones en memoria por sesión |
-| **Cookies** | `cookies.txt` detectado automáticamente para evitar bloqueos |
+| **Seguridad** | Path traversal protection, CORS restringido, validación Pydantic |
 
 ---
 
-## Stack técnico completo
+## Stack técnico
 
 <details>
 <summary><strong>Backend</strong></summary>
 
-| Paquete | Versión | Rol |
-|---|---|---|
-| `fastapi` | 0.109.0 | Framework web asíncrono |
-| `uvicorn` | 0.27.0 | Servidor ASGI |
-| `pydantic` | 2.5.3 | Validación de modelos de datos |
-| `websockets` | 12.0 | WebSocket para subtítulos en tiempo real |
-| `aiofiles` | 23.2.1 | I/O asíncrono de archivos |
-| `python-multipart` | 0.0.6 | Manejo de formularios |
+| Paquete | Rol |
+|---|---|
+| `fastapi` + `uvicorn` | Framework web asíncrono + servidor ASGI |
+| `pydantic` v2 | Validación de requests |
+| `websockets` | Subtítulos en tiempo real |
+| `aiofiles` | I/O asíncrono de archivos |
+
+Todo el trabajo pesado (yt-dlp, Whisper, NLLB, FFmpeg, uploads) corre en `asyncio.to_thread` — nada bloquea el event loop.
 
 </details>
 
 <details>
 <summary><strong>IA y Machine Learning</strong></summary>
 
-| Paquete | Versión | Rol |
-|---|---|---|
-| `torch` | 2.2.0 | Deep learning, CUDA backend |
-| `torchaudio` | 2.2.0 | Procesamiento de audio |
-| `openai-whisper` | 20250625 | Transcripción de audio (modelo medium) |
-| `transformers` | 4.37.2 | NLLB-200 via HuggingFace |
-| `sentencepiece` | 0.1.99 | Tokenización NLLB |
-
-</details>
-
-<details>
-<summary><strong>GPU / CUDA (NVIDIA)</strong></summary>
-
-| Paquete | Versión |
+| Paquete | Rol |
 |---|---|
-| `nvidia-cuda-runtime-cu12` | 12.1.105 |
-| `nvidia-cudnn-cu12` | 8.9.2.26 |
-| `nvidia-cublas-cu12` | 12.1.3.1 |
-| `nvidia-cufft-cu12` | 11.0.2.54 |
-| `nvidia-ml-py` | 12.535.133 |
+| `torch` + `torchaudio` (CUDA 12.1) | Backend de inferencia |
+| `openai-whisper` | Transcripción (modelo medium, word timestamps) |
+| `transformers` | NLLB-200-1.3B vía HuggingFace |
+| `sentencepiece` | Tokenización NLLB |
 
 </details>
 
 <details>
 <summary><strong>Audio, Video y Utilidades</strong></summary>
 
-| Paquete | Versión | Rol |
-|---|---|---|
-| `yt-dlp` | 2025.11.12 | Descarga de video (YouTube y otros) |
-| `edge-tts` | 7.2.3 | Text-to-Speech Microsoft (doblaje) |
-| `av` | 16.0.1 | Procesamiento de video (PyAV) |
-| `librosa` | 0.10.1 | Análisis de audio |
-| `soundfile` | 0.12.1 | Lectura/escritura de audio |
-| `pydub` | 0.25.1 | Manipulación de audio |
-| `tqdm` | 4.67.1 | Barras de progreso |
-| `pyyaml` | 6.0.3 | Configuración |
+| Paquete | Rol |
+|---|---|
+| `yt-dlp` | Descarga de video |
+| `edge-tts` | Doblaje TTS (opcional) |
+| `av`, `librosa`, `soundfile`, `pydub` | Procesamiento de audio/video |
+| FFmpeg (sistema) | Quemado de subtítulos, concat TTS, probes |
+
+</details>
+
+<details>
+<summary><strong>Frontend</strong></summary>
+
+React + Vite + TypeScript. FastAPI sirve el build estático de `frontend/dist/` — en producción no corre ningún proceso Node. Diseño "Studio Dark" con tipografía display auto-hosteada.
 
 </details>
 
@@ -171,7 +239,7 @@ Ambos modelos viven en RAM (CPU) desde el inicio. Al usar uno, el otro se mueve 
 
 | Componente | Mínimo | Recomendado |
 |---|---|---|
-| Python | 3.11 | 3.11 |
+| Python | 3.11 | 3.12 |
 | CUDA Toolkit | 12.1 | 12.1+ |
 | FFmpeg | 6.0 | 6.0+ |
 | RAM | 16 GB | 32 GB |
@@ -193,7 +261,7 @@ cd flowxy-translator
 
 # 3. Entorno virtual
 python3.11 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate        # fish: source .venv/bin/activate.fish
 
 # 4. Dependencias Python
 pip install --upgrade pip
@@ -250,24 +318,29 @@ Luego abre `http://localhost:9000`.
 WHISPER_MODEL_SIZE = "medium"   # tiny | base | small | medium | large-v2 | large-v3
 NLLB_MODEL_SIZE    = "1.3B"     # "600M" | "1.3B"
 COMPUTE_TYPE       = "float16"  # float16 | int8_float16 | int8 | float32
-
-# ── GPU ─────────────────────────────────────────────────────────────
 DEVICE             = "auto"     # "auto" | "cuda" | "cpu"
-BATCH_SIZE         = 8
 
 # ── Whisper ─────────────────────────────────────────────────────────
-WHISPER_BEAM_SIZE  = 5
-WHISPER_BEST_OF    = 5
-WHISPER_VAD_FILTER = True       # Filtro de actividad de voz
+WHISPER_BEAM_SIZE                   = 5
+WHISPER_BEST_OF                     = 5
+WHISPER_NO_SPEECH_THRESHOLD         = 0.6   # descarta segmentos sin habla
+WHISPER_COMPRESSION_RATIO_THRESHOLD = 2.4   # descarta segmentos "garbage"
 
 # ── NLLB ────────────────────────────────────────────────────────────
-NLLB_BEAM_SIZE     = 4
-NLLB_BATCH_SIZE    = 16         # Segmentos por batch
-NLLB_MAX_LENGTH    = 512
+NLLB_BEAM_SIZE          = 5      # calidad vs velocidad
+NLLB_BATCH_SIZE         = 16     # solo en modo batch (context_aware=False)
+NLLB_MAX_LENGTH         = 512
+NLLB_REPETITION_PENALTY = 1.1
+NLLB_NO_REPEAT_NGRAM    = 4
+NLLB_CONTEXT_AWARE      = True   # DP grouper + memoria inter-grupo
+
+# ── Subtítulos ──────────────────────────────────────────────────────
+SRT_MAX_CHARS_PER_LINE = 42      # estándar de legibilidad
+SRT_MAX_LINES          = 2
 
 # ── Servidor ────────────────────────────────────────────────────────
-SERVER_PORT        = 9000       # Evita conflicto con otros servicios locales
-CORS_ORIGINS       = []         # Frontend en mismo origen — no cross-origin
+SERVER_PORT  = 9000              # evita conflicto con otros servicios locales
+CORS_ORIGINS = []                # frontend en el mismo origen — sin cross-origin
 ```
 
 ### Reducir uso de VRAM (GPU pequeña o CPU)
@@ -275,63 +348,73 @@ CORS_ORIGINS       = []         # Frontend en mismo origen — no cross-origin
 ```python
 WHISPER_MODEL_SIZE = "small"     # ~500 MB VRAM
 NLLB_MODEL_SIZE    = "600M"      # ~1.2 GB VRAM
-COMPUTE_TYPE       = "int8"      # Mínimo uso de memoria
+COMPUTE_TYPE       = "int8"
 NLLB_BATCH_SIZE    = 8
 ```
 
 ---
 
-## API — Endpoints REST
+## API — Endpoints
 
 ```
-GET  /                           → Frontend (index.html)
-GET  /player                     → Reproductor con subtítulos
-GET  /health                     → Health check
-GET  /api/gpu-stats              → Estado de la GPU (VRAM, CUDA info)
+GET    /                              → Frontend (index.html)
+GET    /player                        → Reproductor con subtítulos
+GET    /health                        → Health check
+GET    /api/gpu-stats                 → Estado de la GPU (VRAM, CUDA info)
+GET    /api/progress/{task_id}        → Progreso real de la tarea (0.0 – 1.0)
 
-POST /api/download               → Descarga video/audio de YouTube
-POST /api/transcribe             → Transcribe con Whisper
-POST /api/translate              → Traduce texto suelto
-POST /api/translate-transcript   → Traduce transcripción completa por segmentos
-POST /api/export                 → Exporta SRT / VTT / JSON / TXT
-POST /api/export-video           → Exporta MP4 con subtítulos ± TTS
+POST   /api/download                  → Descarga video/audio de YouTube
+POST   /api/upload                    → Sube archivo local (MP4, MKV, WebM, MP3…)
+POST   /api/transcribe                → Transcribe con Whisper (word timestamps)
+POST   /api/translate                 → Traduce texto suelto
+POST   /api/translate-transcript      → Traduce transcripción completa (DP grouper)
+POST   /api/export                    → Exporta SRT / VTT / JSON / TXT (± bilingüe)
+POST   /api/export-video              → Exporta MP4 con subtítulos quemados ± TTS
 
-GET  /api/subtitles/{file}       → Segmentos con timestamps para el player
-GET  /api/export/{file}          → Descarga archivo exportado
-GET  /audio/{file}               → Sirve audio descargado
-GET  /video/{file}               → Sirve video descargado (webm)
+GET    /api/subtitles/{file}          → Segmentos con timestamps para el player
+GET    /api/history                   → Videos procesados (preview + idiomas)
+GET    /api/export/{file}             → Descarga archivo exportado
+GET    /audio/{file}                  → Sirve audio descargado
+GET    /video/{file}                  → Sirve video descargado
 
-WS   /ws                         → WebSocket tiempo real (extensión Chrome)
+DELETE /api/files/{file}              → Borra media + cachés + exports
+DELETE /api/cache/translation/{file}  → Limpia caché de traducción (re-traducir)
+
+WS     /ws                            → WebSocket tiempo real (extensión Chrome)
 ```
+
+Los exports llevan sufijo por idioma (`_es`, `_bilingual`) para que las variantes no se sobreescriban entre sí.
 
 ---
 
 ## Uso paso a paso
 
-**1 · Descargar**
-- Pega la URL de YouTube
-- Activa "Descargar VIDEO COMPLETO" (necesario para el reproductor)
-- El sistema ignora playlists automáticamente y guarda el archivo con sufijo `_video`
+**1 · Obtener el video**
+- Pega una URL de YouTube (con "Descargar VIDEO COMPLETO" activo para usar el reproductor), **o**
+- Arrastra un archivo local (MP4, MKV, WebM, MP3…)
 
 **2 · Transcribir**
-- Selecciona idioma o deja en auto-detect
-- Whisper aplica VAD para ignorar silencios antes de transcribir
-- El resultado se guarda en caché en memoria
+- Selecciona idioma o deja auto-detect
+- Whisper genera segmentos con timestamps por palabra
+- Resultado cacheado en RAM y disco
 
 **3 · Traducir**
 - Selecciona idioma destino (español por defecto)
-- Los segmentos se traducen en batches de 16 — mucho más rápido que uno a uno
-- La traducción también queda en caché
+- El DP grouper traduce oración por oración con contexto
+- El botón *Re-traducir* limpia el caché y vuelve a traducir
 
 **4 · Reproducir**
-- Abre el reproductor integrado
-- Cambia entre modo original, traducido o bilingüe en vivo
+- Reproductor integrado con word highlighting sincronizado
+- Modos original / traducido / bilingüe en vivo
 
 **5 · Exportar**
-- **Video MP4** con subtítulos quemados (FFmpeg, ~30 s)
-- **Video MP4** con subtítulos + doblaje Edge-TTS (~2–3 min)
-- **SRT / VTT** para usar en cualquier reproductor
-- **JSON / TXT** con toda la transcripción y traducción
+- **Video MP4** con subtítulos quemados alineados al habla
+- **Video MP4** con subtítulos + doblaje Edge-TTS *(experimental)*
+- **SRT / VTT** con los mismos cues de calidad que el video
+- **JSON / TXT** con transcripción y traducción completas
+
+**6 · Historial**
+- Cualquier video procesado antes se restaura completo en <1 s desde el caché en disco
 
 ---
 
@@ -342,19 +425,20 @@ WS   /ws                         → WebSocket tiempo real (extensión Chrome)
 | Tarea | Tiempo |
 |---|---|
 | Transcripción (medium, 10 min de video) | ~50–100 s |
-| Traducción (1.3B, 10 min, batch 16) | ~20–40 s |
+| Traducción context-aware (1.3B, 10 min) | ~1–2 min |
 | Export video solo subtítulos | ~30 s |
 | Export video + TTS | ~2–3 min |
 | **Total para video de 10 min** | **~3–5 min** |
+| Repetir cualquier paso (caché) | <1 s |
 
 ### Solo CPU (i7 / Ryzen 7)
 
 | Tarea | Tiempo |
 |---|---|
 | Transcripción (medium, 10 min de video) | ~5–10 min |
-| Traducción (1.3B, 10 min) | ~3–6 min |
+| Traducción (1.3B, 10 min) | ~5–10 min |
 | Export video solo subtítulos | ~2–3 min |
-| **Total para video de 10 min** | **~12–20 min** |
+| **Total para video de 10 min** | **~15–25 min** |
 
 ---
 
@@ -365,33 +449,36 @@ flowxy-translator/
 │
 ├── backend/
 │   ├── config.py                  # Configuración central + helpers GPU
-│   ├── main.py                    # App FastAPI, endpoints, WebSocket
+│   ├── main.py                    # App FastAPI, endpoints, caché 2 capas, WebSocket
 │   │
 │   ├── whisper/
-│   │   ├── whisper_engine.py      # Carga/offload, transcribe_file, transcribe_array
+│   │   ├── whisper_engine.py      # Carga/offload, transcripción con word timestamps
+│   │   ├── whisper_stream.py
 │   │   └── whisper_utils.py
 │   │
 │   ├── translation/
-│   │   ├── nllb_engine.py         # Carga/offload, translate_text, translate_batch, translate_segments
+│   │   ├── nllb_engine.py         # DP grouper, memoria inter-grupo, postproceso
 │   │   ├── translation_utils.py
 │   │   └── language_detect.py
 │   │
 │   ├── export/
-│   │   ├── srt_exporter.py        # SRT simple y bilingüe
+│   │   ├── srt_exporter.py        # build_translated_cues (cues alineados al habla),
+│   │   │                          #   SRT simple y bilingüe
 │   │   ├── vtt_exporter.py        # VTT simple y bilingüe
 │   │   ├── transcript_export.py   # JSON / TXT / TXT bilingüe
-│   │   └── video_export.py        # FFmpeg subtítulos + Edge-TTS
+│   │   └── video_export.py        # FFmpeg quemado + Edge-TTS ajustado al timeline
 │   │
 │   ├── websocket/
-│   │   └── realtime_handler.py    # Lógica WebSocket (extensión Chrome)
+│   │   └── realtime_handler.py    # Subtítulos en tiempo real (extensión Chrome)
 │   │
 │   └── utils/
+│       ├── gpu_lock.py            # Mutex async — serializa acceso a GPU
 │       ├── gpu_stats.py           # VRAM, CUDA info
 │       ├── logger.py
 │       ├── timers.py
 │       └── chunker.py
 │
-├── frontend/                      # React + Vite + TypeScript
+├── frontend/                      # React + Vite + TypeScript (Studio Dark)
 │   ├── index.html                 # Entry de la UI principal
 │   ├── player.html                # Entry del reproductor
 │   ├── vite.config.ts             # Dev proxy a :9000 + build multi-página
@@ -400,14 +487,14 @@ flowxy-translator/
 │   │   ├── api.ts                 # Cliente HTTP tipado (contrato con FastAPI)
 │   │   ├── types.ts               # Tipos compartidos de la API
 │   │   ├── components/            # Una sección del flujo por componente
-│   │   └── player/PlayerApp.tsx   # Reproductor + sincronización de subtítulos
+│   │   └── player/PlayerApp.tsx   # Reproductor + word highlighting
 │   └── dist/                      # Build servido por FastAPI (npm run build)
 │
-├── downloads/                     # Videos/audios descargados
+├── downloads/                     # Media descargada/subida + cachés JSON
 ├── exports/                       # MP4, SRT, VTT, JSON exportados
 ├── models/
-│   ├── whisper/                   # Modelo Whisper descargado automáticamente
-│   └── nllb/                      # Modelo NLLB descargado automáticamente
+│   ├── whisper/                   # Whisper medium (~1.5 GB, auto-descarga)
+│   └── nllb/                      # NLLB-200-1.3B (~2.6 GB, auto-descarga)
 │
 ├── cookies.txt                    # (Opcional) Cookies del navegador para yt-dlp
 ├── requirements.txt
@@ -418,10 +505,11 @@ flowxy-translator/
 
 ## Seguridad
 
-- **Path traversal**: `_safe_filename()` valida cada nombre de archivo recibido por la API — rechaza `../`, rutas absolutas y caracteres peligrosos antes de acceder al disco
-- **CORS**: `CORS_ORIGINS = []` — el frontend se sirve desde el mismo origen que la API (FastAPI static files), por lo que no hay acceso cross-origin
-- **Cookies**: `cookies.txt` solo se lee localmente por yt-dlp; nunca se expone ni se transmite por ningún endpoint
-- **Input validation**: todos los modelos de request usan Pydantic v2 con tipos estrictos
+- **Path traversal**: `_safe_filename()` valida cada nombre de archivo recibido por la API — rechaza `../`, rutas absolutas y caracteres peligrosos antes de tocar el disco
+- **CORS**: `CORS_ORIGINS = []` — el frontend se sirve desde el mismo origen que la API; no hay acceso cross-origin (importante porque `SERVER_HOST="0.0.0.0"` expone el servidor a la red local)
+- **Cookies**: `cookies.txt` solo lo lee yt-dlp localmente; ningún endpoint lo expone
+- **Input validation**: todos los requests se validan con Pydantic v2
+- **Escape de HTML** en el historial del frontend
 
 ---
 
@@ -451,6 +539,8 @@ COMPUTE_TYPE       = "int8"
 NLLB_BATCH_SIZE    = 4
 ```
 
+El offload automático ya evita el caso más común (ambos modelos en GPU a la vez).
+
 </details>
 
 <details>
@@ -461,9 +551,16 @@ Exporta las cookies de tu navegador a un archivo `cookies.txt` en la raíz del p
 </details>
 
 <details>
+<summary><strong>Los subtítulos del video exportado no coinciden con el audio</strong></summary>
+
+Si la traducción viene de un caché antiguo (sin word timestamps), el sistema degrada a interpolación lineal. Borra el caché de traducción (`DELETE /api/cache/translation/{file}` o el botón *Re-traducir*) y vuelve a traducir para regenerar los datos completos.
+
+</details>
+
+<details>
 <summary><strong>Video no se reproduce en el player</strong></summary>
 
-El reproductor necesita el archivo de **video completo** (no solo audio). Asegúrate de haber marcado "Descargar VIDEO COMPLETO" al descargar. Si tienes solo audio, vuelve a descargar con esa opción activa.
+El reproductor necesita el archivo de **video completo** (no solo audio). Asegúrate de haber marcado "Descargar VIDEO COMPLETO" al descargar.
 
 </details>
 
@@ -484,20 +581,13 @@ O cambia `SERVER_PORT` en `backend/config.py`.
 </details>
 
 <details>
-<summary><strong>Dependencias rotas en Windows (Visual C++)</strong></summary>
-
-Instala [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) y vuelve a ejecutar `pip install -r requirements.txt`.
-
-</details>
-
-<details>
 <summary><strong>Primera ejecución muy lenta</strong></summary>
 
 Los modelos se descargan una sola vez:
 - Whisper medium → ~1.5 GB en `models/whisper/`
 - NLLB 1.3B → ~2.6 GB en `models/nllb/`
 
-Las siguientes ejecuciones cargan los modelos directamente desde disco.
+Después, ambos se precargan en RAM al arrancar el servidor — el primer request ya no paga cold-start.
 
 </details>
 
@@ -505,7 +595,7 @@ Las siguientes ejecuciones cargan los modelos directamente desde disco.
 
 ## ¿La traducción es literal?
 
-No. NLLB-200 traduce por **contexto y significado**:
+No. NLLB-200 traduce por **contexto y significado**, y el DP grouper le da oraciones completas con memoria del discurso anterior:
 
 ```
 Original:  "I'm gonna grab a bite before we dive into the code"
@@ -515,12 +605,14 @@ NLLB:      "Voy a comer algo antes de meternos con el código"
 
 El modelo reorganiza frases, adapta expresiones idiomáticas y mantiene el tono técnico del contenido.
 
+> **Límite conocido**: cuando NLLB reordena mucho una oración larga, el subtítulo puede adelantarse o atrasarse ~1 frase respecto al audio — es inherente a alinear una traducción reordenada con el habla original.
+
 ---
 
 <div align="center">
 
 **Flowxy-Translator** · MIT License · [@flowxy](https://github.com/floowxy)
 
-*Whisper medium · NLLB-200 1.3B · Edge-TTS · FastAPI · PyTorch CUDA*
+*Whisper medium · NLLB-200 1.3B · Edge-TTS · FastAPI · React · PyTorch CUDA*
 
 </div>
