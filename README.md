@@ -19,6 +19,8 @@
 [![NLLB](https://img.shields.io/badge/NLLB-1.3B-0467DF?style=for-the-badge&logo=meta&logoColor=white)](https://ai.meta.com/research/no-language-left-behind/)
 [![License](https://img.shields.io/badge/License-MIT-22C55E?style=for-the-badge)](LICENSE)
 
+### **[📖 Documentación completa → floowxy.github.io/flowxy-translator](https://floowxy.github.io/flowxy-translator/)**
+
 </div>
 
 ---
@@ -611,7 +613,7 @@ El modelo reorganiza frases, adapta expresiones idiomáticas y mantiene el tono 
 
 <div align="center">
 
-**Flowxy-Translator** · MIT License · [@flowxy](https://github.com/floowxy)
+**[Documentación completa](https://floowxy.github.io/flowxy-translator/)** · **Flowxy-Translator** · MIT License · [@flowxy](https://github.com/floowxy)
 
 *Whisper medium · NLLB-200 1.3B · Edge-TTS · FastAPI · React · PyTorch CUDA*
 
