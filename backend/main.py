@@ -34,7 +34,7 @@ from backend.utils.gpu_lock import gpu_lock as _gpu_lock
 from backend.utils.timers import timer
 from backend.whisper.whisper_engine import transcribe_file, preload_to_cpu as _whisper_preload
 from backend.translation.nllb_engine import translate_text, translate_segments, preload_to_cpu as _nllb_preload
-from backend.export.srt_exporter import create_srt, create_bilingual_srt
+from backend.export.srt_exporter import create_srt, create_bilingual_srt, build_translated_cues
 from backend.export.vtt_exporter import create_vtt, create_bilingual_vtt
 from backend.export.transcript_export import export_json, export_txt, export_bilingual_txt
 
@@ -576,13 +576,23 @@ async def export_endpoint(req: ExportRequest):
             if req.bilingual:
                 create_bilingual_srt(segments, output_path)
             else:
-                create_srt(segments, output_path, use_translation=req.use_translation)
-        
+                # consolidate con traducción: cues alineados al habla en lugar
+                # de la traducción del grupo repetida en cada segmento
+                create_srt(
+                    segments, output_path,
+                    use_translation=req.use_translation,
+                    consolidate=req.use_translation,
+                )
+
         elif req.format == "vtt":
             if req.bilingual:
                 create_bilingual_vtt(segments, output_path)
             else:
-                create_vtt(segments, output_path, use_translation=req.use_translation)
+                vtt_segments = (
+                    build_translated_cues(segments)
+                    if req.use_translation else segments
+                )
+                create_vtt(vtt_segments, output_path, use_translation=req.use_translation)
         
         elif req.format == "txt":
             text = transcription.get("text", "")
@@ -705,15 +715,15 @@ async def export_video_with_subtitles(req: VideoExportRequest):
     base_name = video_path.stem
     
     try:
-        # 1. Generar SRT consolidado:
-        #    - consolidate=True: fusiona segmentos con la misma traducción en
-        #      una sola entrada → sin parpadeo, sincronizado con la oración completa
-        #    - 60×3: oraciones largas del DP grouper caben sin truncarse
+        # 1. Generar SRT con cues alineados al habla:
+        #    - consolidate=True + use_translation=True → build_translated_cues:
+        #      frases completas ancladas a los word timestamps de la fuente
+        #    - 42×2: máximo estándar de legibilidad, sin muros de texto
         _task_progress[task_id] = 0.02
         srt_path = EXPORTS_DIR / f"{base_name}_es.srt"
         await asyncio.to_thread(
             create_srt, translation["segments"], srt_path, True,
-            max_chars_per_line=60, max_lines=3, consolidate=True, max_duration_s=6.0,
+            max_chars_per_line=42, max_lines=2, consolidate=True, max_duration_s=6.0,
         )
         _task_progress[task_id] = 0.05
 
