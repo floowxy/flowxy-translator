@@ -915,17 +915,40 @@ async def delete_file(file_name: str):
     return {"status": "ok", "deleted": safe_name}
 
 
+# Metadatos del historial cacheados por mtime: las transcripciones con word
+# timestamps pesan MBs y el endpoint se llama en cada refresh de la UI —
+# solo se re-parsea un JSON si su archivo cambió.
+_history_meta_cache: dict[str, tuple[float, dict]] = {}
+
+
 @app.get("/api/history")
 async def get_history():
     """Lista de videos ya procesados con transcripción en disco."""
     entries = []
+    seen: set[str] = set()
     for json_path in sorted(
         DOWNLOADS_DIR.glob("*_transcription.json"),
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     ):
         try:
-            data = json.loads(json_path.read_text(encoding="utf-8"))
+            mtime = json_path.stat().st_mtime
+            cache_key = str(json_path)
+            seen.add(cache_key)
+
+            cached = _history_meta_cache.get(cache_key)
+            if cached and cached[0] == mtime:
+                meta = cached[1]
+            else:
+                data = json.loads(json_path.read_text(encoding="utf-8"))
+                meta = {
+                    "language": data.get("language", "?"),
+                    "duration": data.get("duration", 0),
+                    "text_preview": data.get("text", "")[:120].strip(),
+                    "segments": len(data.get("segments", [])),
+                }
+                _history_meta_cache[cache_key] = (mtime, meta)
+
             media_stem = json_path.stem[: -len("_transcription")]
 
             candidates = [
@@ -948,14 +971,15 @@ async def get_history():
             entries.append({
                 "file_name": media_file,
                 "media_type": media_type,
-                "language": data.get("language", "?"),
-                "duration": data.get("duration", 0),
-                "text_preview": data.get("text", "")[:120].strip(),
-                "segments": len(data.get("segments", [])),
+                **meta,
                 "translations": translations,
             })
         except Exception as e:
             logger.warning(f"Error leyendo historial {json_path.name}: {e}")
+
+    # Purga de entradas cuyos archivos ya no existen
+    for key in [k for k in _history_meta_cache if k not in seen]:
+        del _history_meta_cache[key]
 
     return {"entries": entries}
 
