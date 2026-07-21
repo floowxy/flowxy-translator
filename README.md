@@ -347,11 +347,46 @@ CORS_ORIGINS = []                # frontend en el mismo origen — sin cross-ori
 
 ### Reducir uso de VRAM (GPU pequeña o CPU)
 
+**Recomendado**: usar el panel **Configuración** de la interfaz web (sección
+colapsada arriba del historial) en vez de editar `config.py` a mano — detecta
+tu VRAM/CPU/RAM real y ofrece 4 presets (`cpu`, `low-vram`, `standard`,
+`high-end`). Ver "Configuración por hardware" más abajo.
+
+Si preferís editarlo directamente, estos son los valores del preset `low-vram`:
+
 ```python
 WHISPER_MODEL_SIZE = "small"     # ~500 MB VRAM
 NLLB_MODEL_SIZE    = "600M"      # ~1.2 GB VRAM
-COMPUTE_TYPE       = "int8"
 NLLB_BATCH_SIZE    = 8
+```
+
+---
+
+## Configuración por hardware (presets)
+
+Otra persona con distinto hardware no necesita editar `config.py`: el panel
+**Configuración** del frontend (colapsado, arriba del historial) detecta VRAM,
+núcleos de CPU y RAM reales, y permite elegir uno de 4 presets:
+
+| Preset | Cuándo | Whisper | NLLB |
+|---|---|---|---|
+| `cpu` | Sin GPU NVIDIA | `base`, greedy (beam=1) | `600M`, beam=1 |
+| `low-vram` | GPU con 4-6 GB | `small` | `600M` |
+| `standard` | GPU con ~8 GB (default) | `medium` | `1.3B` |
+| `high-end` | GPU con 12+ GB | `large-v3`, beam=8 | `1.3B`, beam=8 |
+
+Un modo "Configuración avanzada" permite ajustar cada valor individualmente
+(tamaños de modelo, beam sizes, batch size, repetition penalty, etc.).
+
+**Guardar un preset requiere reiniciar el servidor** — los modelos ya están
+cargados en memoria del proceso (`lru_cache`) y no se recargan en caliente.
+El preset guardado se persiste en `config.local.json` (gitignored, no se
+versiona) en la raíz del repo.
+
+```
+GET  /api/system-specs   → specs detectadas (VRAM, GPU, núcleos, RAM)
+GET  /api/settings       → preset guardado vs. el activo en este proceso
+POST /api/settings       → guarda { preset, overrides }
 ```
 
 ---
@@ -363,6 +398,9 @@ GET    /                              → Frontend (index.html)
 GET    /player                        → Reproductor con subtítulos
 GET    /health                        → Health check
 GET    /api/gpu-stats                 → Estado de la GPU (VRAM, CUDA info)
+GET    /api/system-specs              → Specs detectadas (VRAM, GPU, CPU, RAM)
+GET    /api/settings                  → Preset guardado vs. activo en el proceso
+POST   /api/settings                  → Guarda preset + overrides (requiere reinicio)
 GET    /api/progress/{task_id}        → Progreso real de la tarea (0.0 – 1.0)
 
 POST   /api/download                  → Descarga video/audio de YouTube
