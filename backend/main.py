@@ -1039,17 +1039,22 @@ async def delete_file(file_name: str):
 # solo se re-parsea un JSON si su archivo cambió.
 _history_meta_cache: dict[str, tuple[float, dict]] = {}
 
+# Solo los más recientes: es un atajo para retomar sesión, no un archivo
+# completo — mostrar todo lo procesado en meses de uso sería una lista sin fin.
+_HISTORY_LIMIT = 3
+
 
 @app.get("/api/history")
 async def get_history():
-    """Lista de videos ya procesados con transcripción en disco."""
+    """Últimos videos procesados con transcripción en disco (los más recientes)."""
     entries = []
     seen: set[str] = set()
-    for json_path in sorted(
+    recent = sorted(
         DOWNLOADS_DIR.glob("*_transcription.json"),
         key=lambda p: p.stat().st_mtime,
         reverse=True,
-    ):
+    )[:_HISTORY_LIMIT]
+    for json_path in recent:
         try:
             mtime = json_path.stat().st_mtime
             cache_key = str(json_path)
