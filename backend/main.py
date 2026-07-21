@@ -179,6 +179,15 @@ def _safe_filename(file_name: str) -> str:
     return safe_name
 
 
+_VIDEO_EXTS = {".mp4", ".mkv", ".mov", ".avi", ".webm"}
+_AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".ogg", ".flac"}
+
+
+def _media_type_for(file_name: str) -> str:
+    """Tipo de media por extensión — válido tanto para descargas como uploads."""
+    return "video" if Path(file_name).suffix.lower() in _VIDEO_EXTS else "audio"
+
+
 # ============================================
 # HELPERS SÍNCRONOS (para asyncio.to_thread)
 # ============================================
@@ -835,7 +844,7 @@ async def get_subtitles(file_name: str):
 @app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
     """Sube un archivo de video/audio local. Alternativa a descargar de YouTube."""
-    allowed = {'.mp4', '.mkv', '.mov', '.avi', '.webm', '.mp3', '.wav', '.m4a', '.ogg', '.flac'}
+    allowed = _VIDEO_EXTS | _AUDIO_EXTS
 
     if not file.filename:
         raise HTTPException(status_code=400, detail="Nombre de archivo requerido")
@@ -857,7 +866,7 @@ async def upload_file(file: UploadFile = File(...)):
         logger.error(f"Error subiendo archivo: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-    media_type = "video" if ext in {".mp4", ".mkv", ".mov", ".avi", ".webm"} else "audio"
+    media_type = _media_type_for(upload_name)
     logger.info(f"✓ Subido: {upload_name} ({dest.stat().st_size} bytes)")
 
     return {
@@ -927,7 +936,9 @@ async def get_history():
                 continue
 
             media_file = candidates[0].name
-            media_type = "video" if "_video" in media_file else "audio"
+            # Por extensión, no por sufijo "_video" — los archivos subidos
+            # localmente no llevan sufijo y quedaban clasificados como audio.
+            media_type = _media_type_for(media_file)
 
             translations = [
                 lang for lang in NLLB_LANG_CODES
