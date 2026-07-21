@@ -8,6 +8,60 @@ import {
 } from "../types";
 import type { ConfigOverrides, PresetName, SettingsResponse, SystemSpecs } from "../types";
 
+interface NumberFieldProps {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  onCommit: (n: number) => void;
+}
+
+/**
+ * Input numérico con texto libre mientras se edita — value/onChange puros
+ * coercían "" a 0 vía Number(), así que borrar el campo para escribir un
+ * valor nuevo mostraba "0" y luego anteponía dígitos ("08") en vez de
+ * quedar vacío. Acá el texto se mantiene local hasta el blur/Enter, donde
+ * recién se parsea, se recorta a [min, max] y se confirma al padre.
+ */
+function NumberField({ label, value, min, max, step, onCommit }: NumberFieldProps) {
+  const [text, setText] = useState(String(value));
+
+  useEffect(() => {
+    setText(String(value));
+  }, [value]);
+
+  function commit() {
+    const n = Number(text);
+    if (text.trim() !== "" && Number.isFinite(n)) {
+      const clamped = Math.min(max, Math.max(min, n));
+      onCommit(clamped);
+      setText(String(clamped));
+    } else {
+      setText(String(value));
+    }
+  }
+
+  return (
+    <div className="advanced-field">
+      <label>{label}</label>
+      <input
+        type="number"
+        min={min}
+        max={max}
+        step={step}
+        className="input-field"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        }}
+      />
+    </div>
+  );
+}
+
 /**
  * Panel de configuración por hardware — sección especial fuera del flujo
  * numerado (mismo patrón que HistorySection). Colapsada por defecto: es un
@@ -181,54 +235,36 @@ export function SettingsSection() {
                         ))}
                       </select>
                     </div>
-                    <div className="advanced-field">
-                      <label>Whisper beam size</label>
-                      <input
-                        type="number" min={1} max={10} className="input-field"
-                        value={draftOverrides.WHISPER_BEAM_SIZE ?? effective.WHISPER_BEAM_SIZE}
-                        onChange={(e) => updateOverride("WHISPER_BEAM_SIZE", Number(e.target.value))}
-                      />
-                    </div>
-                    <div className="advanced-field">
-                      <label>Whisper best_of</label>
-                      <input
-                        type="number" min={1} max={10} className="input-field"
-                        value={draftOverrides.WHISPER_BEST_OF ?? effective.WHISPER_BEST_OF}
-                        onChange={(e) => updateOverride("WHISPER_BEST_OF", Number(e.target.value))}
-                      />
-                    </div>
-                    <div className="advanced-field">
-                      <label>NLLB beam size</label>
-                      <input
-                        type="number" min={1} max={10} className="input-field"
-                        value={draftOverrides.NLLB_BEAM_SIZE ?? effective.NLLB_BEAM_SIZE}
-                        onChange={(e) => updateOverride("NLLB_BEAM_SIZE", Number(e.target.value))}
-                      />
-                    </div>
-                    <div className="advanced-field">
-                      <label>NLLB batch size</label>
-                      <input
-                        type="number" min={1} max={64} className="input-field"
-                        value={draftOverrides.NLLB_BATCH_SIZE ?? effective.NLLB_BATCH_SIZE}
-                        onChange={(e) => updateOverride("NLLB_BATCH_SIZE", Number(e.target.value))}
-                      />
-                    </div>
-                    <div className="advanced-field">
-                      <label>NLLB repetition penalty</label>
-                      <input
-                        type="number" min={1} max={2} step={0.05} className="input-field"
-                        value={draftOverrides.NLLB_REPETITION_PENALTY ?? effective.NLLB_REPETITION_PENALTY}
-                        onChange={(e) => updateOverride("NLLB_REPETITION_PENALTY", Number(e.target.value))}
-                      />
-                    </div>
-                    <div className="advanced-field">
-                      <label>NLLB no-repeat n-gram</label>
-                      <input
-                        type="number" min={0} max={10} className="input-field"
-                        value={draftOverrides.NLLB_NO_REPEAT_NGRAM ?? effective.NLLB_NO_REPEAT_NGRAM}
-                        onChange={(e) => updateOverride("NLLB_NO_REPEAT_NGRAM", Number(e.target.value))}
-                      />
-                    </div>
+                    <NumberField
+                      label="Whisper beam size" min={1} max={10}
+                      value={draftOverrides.WHISPER_BEAM_SIZE ?? effective.WHISPER_BEAM_SIZE}
+                      onCommit={(n) => updateOverride("WHISPER_BEAM_SIZE", n)}
+                    />
+                    <NumberField
+                      label="Whisper best_of" min={1} max={10}
+                      value={draftOverrides.WHISPER_BEST_OF ?? effective.WHISPER_BEST_OF}
+                      onCommit={(n) => updateOverride("WHISPER_BEST_OF", n)}
+                    />
+                    <NumberField
+                      label="NLLB beam size" min={1} max={10}
+                      value={draftOverrides.NLLB_BEAM_SIZE ?? effective.NLLB_BEAM_SIZE}
+                      onCommit={(n) => updateOverride("NLLB_BEAM_SIZE", n)}
+                    />
+                    <NumberField
+                      label="NLLB batch size" min={1} max={64}
+                      value={draftOverrides.NLLB_BATCH_SIZE ?? effective.NLLB_BATCH_SIZE}
+                      onCommit={(n) => updateOverride("NLLB_BATCH_SIZE", n)}
+                    />
+                    <NumberField
+                      label="NLLB repetition penalty" min={1} max={2} step={0.05}
+                      value={draftOverrides.NLLB_REPETITION_PENALTY ?? effective.NLLB_REPETITION_PENALTY}
+                      onCommit={(n) => updateOverride("NLLB_REPETITION_PENALTY", n)}
+                    />
+                    <NumberField
+                      label="NLLB no-repeat n-gram" min={0} max={10}
+                      value={draftOverrides.NLLB_NO_REPEAT_NGRAM ?? effective.NLLB_NO_REPEAT_NGRAM}
+                      onCommit={(n) => updateOverride("NLLB_NO_REPEAT_NGRAM", n)}
+                    />
                     <div className="checkbox-group advanced-field-checkbox">
                       <label>
                         <input
