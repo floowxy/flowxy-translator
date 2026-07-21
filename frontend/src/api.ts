@@ -3,13 +3,17 @@
 // el frontend se sirve desde el mismo origen que la API.
 
 import type {
+  ConfigOverrides,
   DownloadResult,
   ExportFormat,
   ExportResult,
   GpuStatsResponse,
   HistoryEntry,
   MediaType,
+  PresetName,
+  SettingsResponse,
   SubtitlesResponse,
+  SystemSpecs,
   TranscriptionResult,
   TranslationResult,
   UploadResult,
@@ -93,6 +97,13 @@ export const api = {
 
   subtitles: (fileName: string) =>
     request<SubtitlesResponse>(`/api/subtitles/${encodeURIComponent(fileName)}`),
+
+  systemSpecs: () => request<SystemSpecs>("/api/system-specs"),
+
+  getSettings: () => request<SettingsResponse>("/api/settings"),
+
+  saveSettings: (preset: PresetName, overrides: ConfigOverrides) =>
+    post<SettingsResponse>("/api/settings", { preset, overrides }),
 };
 
 export function mediaUrl(fileName: string, mediaType: MediaType): string {

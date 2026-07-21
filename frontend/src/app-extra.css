@@ -223,3 +223,143 @@
   border-color: var(--err);
   color: var(--err);
 }
+
+/* Panel de Configuración por hardware — colapsado por defecto */
+.settings-toggle {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+.settings-chevron {
+  color: var(--text-3);
+  font-size: 0.85em;
+}
+
+.settings-body {
+  margin-top: 1rem;
+}
+
+.specs-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.6rem;
+  margin-bottom: 1.2rem;
+}
+
+.spec-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.65rem 0.8rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.spec-label {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.spec-value {
+  font-size: 0.85rem;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.7rem;
+}
+
+.preset-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  text-align: left;
+  padding: 0.9rem 1rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  color: var(--text);
+  font: inherit;
+}
+
+.preset-card:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.preset-card.selected {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.preset-card:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.preset-card-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.preset-card-desc {
+  font-size: 0.78rem;
+  color: var(--text-2);
+  line-height: 1.4;
+}
+
+.preset-card-badge {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.04em;
+  color: var(--ok);
+}
+
+.advanced-panel {
+  margin-top: 0.9rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.8rem;
+}
+
+.advanced-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.advanced-field label {
+  font-size: 0.75rem;
+  color: var(--text-2);
+}
+
+.advanced-field-checkbox {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 640px) {
+  .specs-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
