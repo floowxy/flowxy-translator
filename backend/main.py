@@ -168,6 +168,17 @@ def _load_from_disk(path: Path) -> dict | None:
     return None
 
 
+def _if_language_matches(cached: dict | None, language: str | None) -> dict | None:
+    """
+    La caché de transcripción en disco no separa por idioma (un solo JSON por
+    archivo). Solo es válida si no se fuerza un idioma distinto al que tiene:
+    con language=None sirve cualquiera; con idioma explícito debe coincidir.
+    """
+    if cached and (language is None or cached.get("language") == language):
+        return cached
+    return None
+
+
 # ============================================
 # UTILIDADES
 # ============================================
@@ -370,7 +381,9 @@ async def transcribe_endpoint(req: TranscribeRequest):
         return transcription_cache[cache_key]
 
     # 2. Caché en disco — sobrevive reloads del servidor
-    cached = _load_from_disk(_transcription_cache_path(file_name))
+    cached = _if_language_matches(
+        _load_from_disk(_transcription_cache_path(file_name)), req.language
+    )
     if cached:
         logger.info("Transcripción en caché (disco)")
         _cache_put(transcription_cache, cache_key, cached)
@@ -387,8 +400,8 @@ async def transcribe_endpoint(req: TranscribeRequest):
     try:
         async with _gpu_lock:
             # Revalidar caché: otro request pudo generarla mientras esperábamos el lock
-            result = transcription_cache.get(cache_key) or _load_from_disk(
-                _transcription_cache_path(file_name)
+            result = transcription_cache.get(cache_key) or _if_language_matches(
+                _load_from_disk(_transcription_cache_path(file_name)), req.language
             )
             if result:
                 logger.info("Transcripción en caché (generada durante la espera del lock)")
