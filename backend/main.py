@@ -923,6 +923,11 @@ async def delete_file(file_name: str):
     for p in EXPORTS_DIR.glob(f"{stem}_*"):
         p.unlink(missing_ok=True)
 
+    # Exports del idioma original no llevan sufijo ({stem}.srt) — sin este
+    # glob quedaban huérfanos tras borrar el archivo
+    for p in EXPORTS_DIR.glob(f"{stem}.*"):
+        p.unlink(missing_ok=True)
+
     for cache in (transcription_cache, translation_cache):
         for key in [k for k in cache if k.startswith(safe_name + "_")]:
             del cache[key]
