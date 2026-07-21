@@ -177,7 +177,8 @@ Todos los endpoints siguen el patrón *memoria → disco*: si el resultado exist
 | **Export video** | Subtítulos quemados con cues alineados al habla (42×2, CPS controlado) |
 | **Export texto** | SRT, VTT, JSON, TXT — simple o bilingüe |
 | **Doblaje TTS** | Edge-TTS opcional, clips ajustados exactamente al timeline *(experimental, en stand-by)* |
-| **Historial** | Lista de videos procesados con preview e idiomas; restaura sesión desde disco |
+| **Historial** | Últimos 3 videos procesados con preview e idiomas; restaura sesión desde disco |
+| **Configuración** | Presets por hardware detectado (VRAM/CPU/RAM) desde el frontend, sin editar código |
 | **Progreso real** | `GET /api/progress/{task_id}` — Whisper, NLLB y FFmpeg reportan avance real |
 | **Gestión** | Borrar archivos (`DELETE /api/files`), re-traducir limpiando caché |
 | **GPU stats** | Polling adaptativo: cada 4 s durante tareas, 30 s en idle |

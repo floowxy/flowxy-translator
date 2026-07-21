@@ -575,7 +575,7 @@ footer {
         <tr><td>Reproductor</td><td>Word highlighting en vivo; modos original / traducido / bilingüe</td></tr>
         <tr><td>Exportación</td><td>MP4 subtitulado, SRT, VTT, JSON, TXT — simple o bilingüe</td></tr>
         <tr><td>Doblaje</td><td>Edge-TTS ajustado exactamente al timeline <em>(experimental, en pausa)</em></td></tr>
-        <tr><td>Historial</td><td>Cualquier video procesado se restaura completo en &lt;1 s desde disco</td></tr>
+        <tr><td>Historial</td><td>Últimos 3 videos procesados, restaurados completos en &lt;1 s desde disco</td></tr>
       </tbody>
     </table></div>
   </div>
@@ -833,9 +833,12 @@ NLLB               CPU  ──────────────────�
     <div class="api-card">
       <div class="endpoint"><span class="method m-get">GET</span><div><span class="path">/api/progress/{task_id}</span><span class="desc">Progreso real de la tarea (0.0 – 1.0)</span></div></div>
       <div class="endpoint"><span class="method m-get">GET</span><div><span class="path">/api/subtitles/{file}</span><span class="desc">Segmentos con timestamps para el reproductor</span></div></div>
-      <div class="endpoint"><span class="method m-get">GET</span><div><span class="path">/api/history</span><span class="desc">Videos procesados, con preview e idiomas traducidos</span></div></div>
+      <div class="endpoint"><span class="method m-get">GET</span><div><span class="path">/api/history</span><span class="desc">Últimos 3 videos procesados, con preview e idiomas traducidos</span></div></div>
       <div class="endpoint"><span class="method m-get">GET</span><div><span class="path">/api/export/{file}</span><span class="desc">Descarga un archivo exportado</span></div></div>
       <div class="endpoint"><span class="method m-get">GET</span><div><span class="path">/api/gpu-stats</span><span class="desc">VRAM y estado CUDA (polling adaptativo: 4 s en tarea, 30 s idle)</span></div></div>
+      <div class="endpoint"><span class="method m-get">GET</span><div><span class="path">/api/system-specs</span><span class="desc">VRAM, GPU, núcleos de CPU y RAM detectados en la máquina</span></div></div>
+      <div class="endpoint"><span class="method m-get">GET</span><div><span class="path">/api/settings</span><span class="desc">Preset guardado vs. el activo en este proceso (¿hace falta reiniciar?)</span></div></div>
+      <div class="endpoint"><span class="method m-post">POST</span><div><span class="path">/api/settings</span><span class="desc">Guarda { preset, overrides } — requiere reiniciar el servidor</span></div></div>
       <div class="endpoint"><span class="method m-get">GET</span><div><span class="path">/audio/{file} · /video/{file}</span><span class="desc">Sirven la media descargada</span></div></div>
       <div class="endpoint"><span class="method m-get">GET</span><div><span class="path">/health</span><span class="desc">Health check</span></div></div>
     </div>
@@ -855,13 +858,25 @@ NLLB               CPU  ──────────────────�
   <div class="sec-head">
     <div class="sec-num">10</div>
     <div class="eyebrow">Referencia</div>
-    <h2>Configuración — backend/config.py</h2>
+    <h2>Configuración</h2>
   </div>
   <div class="measure">
+    <p><strong>Recomendado:</strong> el panel <strong>Configuración</strong> del frontend (colapsado, arriba del historial) detecta VRAM/CPU/RAM reales de la máquina y ofrece 4 presets — no hace falta editar código. Un modo avanzado permite ajustar cada valor individual (tamaños de modelo, beam sizes, batch size…). Guardar un preset escribe <code>config.local.json</code> (gitignored) y requiere <strong>reiniciar el servidor</strong> para aplicarse — los modelos ya están cargados en memoria del proceso y no se recargan en caliente.</p>
+
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>Preset</th><th>Cuándo</th><th>Whisper</th><th>NLLB</th></tr></thead>
+      <tbody>
+        <tr><td><code>cpu</code></td><td>Sin GPU NVIDIA</td><td class="num">base, greedy</td><td class="num">600M, beam=1</td></tr>
+        <tr><td><code>low-vram</code></td><td>GPU con 4–6 GB</td><td class="num">small</td><td class="num">600M</td></tr>
+        <tr><td><code>standard</code></td><td>GPU con ~8 GB (default)</td><td class="num">medium</td><td class="num">1.3B</td></tr>
+        <tr><td><code>high-end</code></td><td>GPU con 12+ GB</td><td class="num">large-v3, beam=8</td><td class="num">1.3B, beam=8</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>backend/config.py — defaults del preset "standard"</h3>
 <pre><code><span class="c"># ── Modelos ──────────────────────────────────────────────</span>
 <span class="k">WHISPER_MODEL_SIZE</span> = <span class="s">"medium"</span>   <span class="c"># tiny | base | small | medium | large-v3</span>
 <span class="k">NLLB_MODEL_SIZE</span>    = <span class="s">"1.3B"</span>     <span class="c"># "600M" | "1.3B"</span>
-<span class="k">COMPUTE_TYPE</span>       = <span class="s">"float16"</span>
 <span class="k">DEVICE</span>             = <span class="s">"auto"</span>     <span class="c"># "auto" | "cuda" | "cpu"</span>
 
 <span class="c"># ── Whisper ──────────────────────────────────────────────</span>
@@ -883,10 +898,7 @@ NLLB               CPU  ──────────────────�
 <span class="k">SERVER_PORT</span>  = <span class="n">9000</span>
 <span class="k">CORS_ORIGINS</span> = []   <span class="c"># frontend en el mismo origen — sin cross-origin</span></code></pre>
 
-    <h3>GPU pequeña o solo CPU</h3>
-<pre><code><span class="k">WHISPER_MODEL_SIZE</span> = <span class="s">"small"</span>    <span class="c"># ~500 MB VRAM</span>
-<span class="k">NLLB_MODEL_SIZE</span>    = <span class="s">"600M"</span>     <span class="c"># ~1.2 GB VRAM</span>
-<span class="k">COMPUTE_TYPE</span>       = <span class="s">"int8"</span></code></pre>
+    <div class="note">Estos valores son los defaults del preset <code>standard</code> — con <code>config.local.json</code> guardado, se sobreescriben al importar el módulo (ver <code>backend/presets.py</code>). Editar <code>config.py</code> a mano sigue funcionando si no hay preset guardado.</div>
   </div>
 </section>
 
