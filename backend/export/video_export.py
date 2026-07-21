@@ -10,20 +10,9 @@ from pathlib import Path
 from typing import Callable, List, Dict, Optional
 import logging
 
+from backend.utils.media import probe_duration
+
 logger = logging.getLogger(__name__)
-
-
-def _probe_duration(path: Path) -> float:
-    """Duración del archivo con ffprobe. Rápido, soporta todos los formatos."""
-    try:
-        result = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "csv=p=0", str(path)],
-            capture_output=True, text=True, timeout=10,
-        )
-        return float(result.stdout.strip())
-    except Exception:
-        return 0.0
 
 
 def burn_subtitles_to_video(
@@ -75,7 +64,7 @@ def burn_subtitles_to_video(
         f"Alignment={subtitle_style['alignment']}'"
     )
     
-    duration = _probe_duration(video_path)
+    duration = probe_duration(video_path)
 
     cmd = [
         "ffmpeg",
@@ -233,7 +222,7 @@ def _fit_clip_to_duration(in_path: Path, out_path: Path, target_dur: float) -> N
     Salida en el mismo formato que generate_silence (MP3 24kHz mono) para
     que el concat con -c copy no corrompa timestamps.
     """
-    actual = _probe_duration(in_path)
+    actual = probe_duration(in_path)
 
     filters = []
     if actual > target_dur > 0:

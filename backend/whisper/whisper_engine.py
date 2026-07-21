@@ -3,7 +3,6 @@ Whisper Engine - Motor de transcripción GPU-optimizado con OpenAI Whisper
 Optimizado para RTX 4060 Ti usando PyTorch + CUDA
 """
 import logging
-import subprocess
 import threading
 import time
 from pathlib import Path
@@ -12,6 +11,7 @@ from typing import Callable, Dict, Any, List, Optional
 import torch
 import whisper
 
+from backend.utils.media import probe_duration
 from backend.config import (
     WHISPER_MODEL_DIR,
     WHISPER_MODEL_SIZE,
@@ -78,23 +78,6 @@ def get_whisper_model():
     return model
 
 
-def _get_audio_duration(audio_path: Path) -> float:
-    """Duración del archivo con ffprobe. Rápido y soporta todos los formatos."""
-    try:
-        result = subprocess.run(
-            [
-                "ffprobe", "-v", "error",
-                "-show_entries", "format=duration",
-                "-of", "csv=p=0",
-                str(audio_path),
-            ],
-            capture_output=True, text=True, timeout=10,
-        )
-        return float(result.stdout.strip())
-    except Exception:
-        return 0.0
-
-
 def preload_to_cpu() -> None:
     """Carga el modelo en CPU RAM sin moverlo a GPU. Elimina el cold-start del primer request."""
     _load_whisper_model()
@@ -151,7 +134,7 @@ def transcribe_file(
     # Progreso estimado basado en duración y velocidad del modelo
     stop_event = threading.Event()
     if progress_callback:
-        duration = _get_audio_duration(audio_path)
+        duration = probe_duration(audio_path)
         if duration > 0:
             # medium en RTX 4060 Ti ≈ 8x realtime; en CPU ≈ 0.5x
             speed = 8.0 if torch.cuda.is_available() else 0.5
