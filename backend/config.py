@@ -28,16 +28,6 @@ EXPORTS_DIR.mkdir(exist_ok=True, parents=True)
 # Device: "cuda", "cpu", "auto"
 DEVICE: Literal["cuda", "cpu", "auto"] = "auto"
 
-# Compute type para CTranslate2
-# RTX 4060 Ti soporta: float16, int8_float16, int8
-COMPUTE_TYPE: Literal["float16", "int8_float16", "int8", "float32"] = "float16"
-
-# Número de workers GPU (1-2 para RTX 4060 Ti)
-GPU_NUM_WORKERS = 1
-
-# Tamaño de batch para inferencia
-BATCH_SIZE = 8
-
 # ============================================
 # WHISPER CONFIGURACIÓN
 # ============================================
@@ -105,24 +95,6 @@ NLLB_LANG_CODES = {
 }
 
 # ============================================
-# TTS CONFIGURACIÓN (Opcional)
-# ============================================
-TTS_MODEL_DIR = MODELS_DIR / "xtts"
-TTS_MODEL_DIR.mkdir(exist_ok=True, parents=True)
-
-TTS_ENABLED = False  # Activar cuando sea necesario
-TTS_MODEL_NAME = "tts_models/multilingual/multi-dataset/xtts_v2"
-TTS_LANGUAGE = "es"  # Default a español
-TTS_SPEAKER_WAV = None  # Path a audio de referencia
-
-# ============================================
-# AUDIO PROCESAMIENTO
-# ============================================
-AUDIO_SAMPLE_RATE = 16000  # Whisper requiere 16kHz
-AUDIO_CHANNELS = 1  # Mono
-AUDIO_CHUNK_LENGTH_S = 30  # Segundos por chunk
-
-# ============================================
 # SERVIDOR
 # ============================================
 SERVER_HOST = "0.0.0.0"
@@ -139,8 +111,6 @@ CORS_ORIGINS = []
 # LOGGING
 # ============================================
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
-LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-LOG_FILE = BASE_DIR / "flowxy-translator.log"
 
 # ============================================
 # EXPORT
@@ -199,7 +169,6 @@ if __name__ == "__main__":
     print("FLOWXY-TRANSLATOR - Configuración")
     print("=" * 50)
     print(f"Device seleccionado: {get_device()}")
-    print(f"Compute type: {COMPUTE_TYPE}")
     print(f"Whisper model: {WHISPER_MODEL_SIZE}")
     print(f"NLLB model: {NLLB_MODEL_SIZE}")
     print("\nGPU Info:")

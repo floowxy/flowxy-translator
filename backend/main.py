@@ -23,8 +23,13 @@ from backend.config import (
     BASE_DIR,
     DOWNLOADS_DIR,
     EXPORTS_DIR,
+    EXPORT_FORMATS,
+    LOG_LEVEL,
     SERVER_HOST,
     SERVER_PORT,
+    SERVER_RELOAD,
+    SRT_MAX_CHARS_PER_LINE,
+    SRT_MAX_LINES,
     CORS_ORIGINS,
     NLLB_LANG_CODES,
 )
@@ -42,7 +47,7 @@ from backend.export.transcript_export import export_json, export_txt, export_bil
 from backend.websocket.realtime_handler import websocket_endpoint
 
 # Setup logging
-setup_global_logger(level="INFO")
+setup_global_logger(level=LOG_LEVEL)
 logger = get_logger(__name__)
 
 # FastAPI app
@@ -559,6 +564,9 @@ async def export_endpoint(req: ExportRequest):
     """
     Exporta transcripción/traducción en formato especificado
     """
+    if req.format not in EXPORT_FORMATS:
+        raise HTTPException(status_code=400, detail=f"Formato no soportado: {req.format}")
+
     file_name = _safe_filename(req.file_name)
 
     # Transcripción: memoria → disco
@@ -759,7 +767,8 @@ async def export_video_with_subtitles(req: VideoExportRequest):
         srt_path = EXPORTS_DIR / f"{base_name}_{target_lang}.srt"
         await asyncio.to_thread(
             create_srt, translation["segments"], srt_path, True,
-            max_chars_per_line=42, max_lines=2, consolidate=True, max_duration_s=6.0,
+            max_chars_per_line=SRT_MAX_CHARS_PER_LINE, max_lines=SRT_MAX_LINES,
+            consolidate=True, max_duration_s=6.0,
         )
         _task_progress[task_id] = 0.05
 
@@ -1065,6 +1074,6 @@ if __name__ == "__main__":
         "backend.main:app",
         host=SERVER_HOST,
         port=SERVER_PORT,
-        reload=True,
+        reload=SERVER_RELOAD,
         log_level="info",
     )
