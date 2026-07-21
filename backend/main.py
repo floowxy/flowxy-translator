@@ -37,6 +37,17 @@ from backend.utils.logger import setup_global_logger, get_logger
 from backend.utils.gpu_stats import get_gpu_stats, get_cuda_info, print_gpu_summary
 from backend.utils.gpu_lock import gpu_lock as _gpu_lock
 from backend.utils.timers import timer
+from backend.utils.system_specs import get_cpu_cores, get_ram_total_gb
+from backend.presets import (
+    CONFIGURABLE_KEYS,
+    PRESET_METADATA,
+    PRESETS,
+    load_local_config,
+    recommend_preset,
+    save_local_config,
+    validate_overrides,
+)
+import backend.config as _config_module
 from backend.whisper.whisper_engine import transcribe_file, preload_to_cpu as _whisper_preload
 from backend.translation.nllb_engine import translate_text, translate_segments, preload_to_cpu as _nllb_preload
 from backend.export.srt_exporter import create_srt, create_bilingual_srt, build_translated_cues
@@ -258,6 +269,73 @@ async def gpu_stats():
         "cuda": get_cuda_info(),
         "gpu": get_gpu_stats(),
     }
+
+
+@app.get("/api/system-specs")
+async def system_specs():
+    """Specs reales de esta máquina — para prellenar el panel de Configuración."""
+    cuda_info = get_cuda_info()
+    gpu = get_gpu_stats() if cuda_info.get("available") else {"available": False}
+
+    return {
+        "cuda_available": cuda_info.get("available", False),
+        "gpu_name": gpu.get("name") if gpu.get("available") else None,
+        "vram_total_gb": gpu.get("memory", {}).get("total_gb") if gpu.get("available") else None,
+        "cpu_cores": get_cpu_cores(),
+        "ram_total_gb": get_ram_total_gb(),
+        "recommended_preset": recommend_preset(),
+    }
+
+
+def _active_config() -> dict:
+    """Valores de las 9 claves configurables tal como quedaron cargadas en este proceso."""
+    return {key: getattr(_config_module, key) for key in CONFIGURABLE_KEYS}
+
+
+@app.get("/api/settings")
+async def get_settings():
+    """
+    Preset/overrides guardados en disco vs. los que efectivamente cargó este
+    proceso al arrancar — restart_required avisa si difieren (p.ej. tras
+    guardar un preset nuevo sin haber reiniciado el servidor todavía).
+    """
+    saved_raw = load_local_config(BASE_DIR)
+    saved_preset = saved_raw.get("preset") or recommend_preset()
+    saved_overrides = saved_raw.get("overrides") or {}
+    saved_effective = {**_config_module._model_defaults, **PRESETS.get(saved_preset, {}), **saved_overrides}
+
+    active_preset = _config_module.ACTIVE_PRESET
+    active_overrides = _config_module.ACTIVE_OVERRIDES
+    active_effective = _active_config()
+
+    return {
+        "saved": {"preset": saved_preset, "overrides": saved_overrides, "effective": saved_effective},
+        "active": {"preset": active_preset, "overrides": active_overrides, "effective": active_effective},
+        "restart_required": (saved_preset, saved_overrides) != (active_preset, active_overrides),
+        "config_exists": bool(saved_raw),
+        "presets": PRESET_METADATA,
+    }
+
+
+class SettingsRequest(BaseModel):
+    preset: str
+    overrides: dict = {}
+
+
+@app.post("/api/settings")
+async def save_settings(req: SettingsRequest):
+    """Guarda preset + overrides en config.local.json. Requiere reiniciar el servidor para aplicarse."""
+    if req.preset not in PRESETS:
+        raise HTTPException(status_code=400, detail=f"Preset desconocido: {req.preset}")
+
+    error = validate_overrides(req.overrides)
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+
+    save_local_config(BASE_DIR, req.preset, req.overrides)
+    logger.info(f"Preset guardado: {req.preset} (overrides: {req.overrides})")
+
+    return await get_settings()
 
 
 @app.post("/api/download")
