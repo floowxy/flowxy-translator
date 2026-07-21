@@ -63,13 +63,6 @@ NLLB_MODEL_DIR.mkdir(exist_ok=True, parents=True)
 # Para RTX 4060 Ti 8GB: 1.3B funciona bien con float16
 NLLB_MODEL_SIZE = "1.3B"
 
-# HuggingFace model name
-NLLB_MODEL_NAME = (
-    "facebook/nllb-200-distilled-600M" 
-    if NLLB_MODEL_SIZE == "600M" 
-    else "facebook/nllb-200-1.3B"
-)
-
 # Parámetros de traducción
 NLLB_BEAM_SIZE = 5           # +1 beam mejora calidad notablemente (~20% más lento)
 NLLB_MAX_LENGTH = 512
@@ -93,6 +86,45 @@ NLLB_LANG_CODES = {
     "ar": "arb_Arab",  # Árabe
     "hi": "hin_Deva",  # Hindi
 }
+
+# ============================================
+# PRESET / config.local.json — override por hardware
+# ============================================
+# Si el usuario guardó un preset desde el frontend (Configuración), estas 9
+# variables se sobreescriben aquí. Sin config.local.json, se auto-detecta un
+# preset por la VRAM real de la máquina (ver backend/presets.py) — no se
+# persiste nada hasta que el usuario guarde explícitamente.
+from backend.presets import resolve_effective_config
+
+_model_defaults = {
+    "WHISPER_MODEL_SIZE": WHISPER_MODEL_SIZE,
+    "WHISPER_BEAM_SIZE": WHISPER_BEAM_SIZE,
+    "WHISPER_BEST_OF": WHISPER_BEST_OF,
+    "NLLB_MODEL_SIZE": NLLB_MODEL_SIZE,
+    "NLLB_BEAM_SIZE": NLLB_BEAM_SIZE,
+    "NLLB_BATCH_SIZE": NLLB_BATCH_SIZE,
+    "NLLB_REPETITION_PENALTY": NLLB_REPETITION_PENALTY,
+    "NLLB_NO_REPEAT_NGRAM": NLLB_NO_REPEAT_NGRAM,
+    "NLLB_CONTEXT_AWARE": NLLB_CONTEXT_AWARE,
+}
+_effective, ACTIVE_PRESET, ACTIVE_OVERRIDES = resolve_effective_config(BASE_DIR, _model_defaults)
+
+WHISPER_MODEL_SIZE = _effective["WHISPER_MODEL_SIZE"]
+WHISPER_BEAM_SIZE = _effective["WHISPER_BEAM_SIZE"]
+WHISPER_BEST_OF = _effective["WHISPER_BEST_OF"]
+NLLB_MODEL_SIZE = _effective["NLLB_MODEL_SIZE"]
+NLLB_BEAM_SIZE = _effective["NLLB_BEAM_SIZE"]
+NLLB_BATCH_SIZE = _effective["NLLB_BATCH_SIZE"]
+NLLB_REPETITION_PENALTY = _effective["NLLB_REPETITION_PENALTY"]
+NLLB_NO_REPEAT_NGRAM = _effective["NLLB_NO_REPEAT_NGRAM"]
+NLLB_CONTEXT_AWARE = _effective["NLLB_CONTEXT_AWARE"]
+
+# Depende de NLLB_MODEL_SIZE — se calcula DESPUÉS del override
+NLLB_MODEL_NAME = (
+    "facebook/nllb-200-distilled-600M"
+    if NLLB_MODEL_SIZE == "600M"
+    else "facebook/nllb-200-1.3B"
+)
 
 # ============================================
 # SERVIDOR
