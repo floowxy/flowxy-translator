@@ -733,16 +733,19 @@ async def export_video_with_subtitles(req: VideoExportRequest):
     # Crear directorio de exportación si no existe
     EXPORTS_DIR.mkdir(exist_ok=True)
     
-    # Nombre base para archivos de salida
+    # Nombre base para archivos de salida — sufijo con el idioma real de la
+    # traducción encontrada, no "es" fijo (la búsqueda prefiere español pero
+    # puede devolver otro idioma si es el único traducido)
     base_name = video_path.stem
-    
+    target_lang = translation.get("target_lang", "es")
+
     try:
         # 1. Generar SRT con cues alineados al habla:
         #    - consolidate=True + use_translation=True → build_translated_cues:
         #      frases completas ancladas a los word timestamps de la fuente
         #    - 42×2: máximo estándar de legibilidad, sin muros de texto
         _task_progress[task_id] = 0.02
-        srt_path = EXPORTS_DIR / f"{base_name}_es.srt"
+        srt_path = EXPORTS_DIR / f"{base_name}_{target_lang}.srt"
         await asyncio.to_thread(
             create_srt, translation["segments"], srt_path, True,
             max_chars_per_line=42, max_lines=2, consolidate=True, max_duration_s=6.0,
