@@ -292,11 +292,12 @@ async def download_audio(req: DownloadRequest):
                 "no_warnings": True,
                 "noplaylist": True,  # NO descargar playlist completa
                 "progress_hooks": [progress_hook],
+                # Sin FFmpegVideoConvertor: si el fallback elige streams no-webm
+                # (h264/aac), el convertor re-encodeaba el video completo a VP9
+                # (minutos de CPU). yt-dlp ya elige mkv si el merge a webm no es
+                # posible, y todo el pipeline posterior (ffmpeg, player) soporta
+                # cualquier contenedor.
                 "merge_output_format": "webm",
-                "postprocessors": [{
-                    'key': 'FFmpegVideoConvertor',
-                    'preferedformat': 'webm',
-                }],
             }
         else:
             # Solo audio (SOLO el video, no playlist)
@@ -319,7 +320,17 @@ async def download_audio(req: DownloadRequest):
             info, filename = await asyncio.to_thread(_ytdlp_download, ydl_opts, req.url)
         
         file_path = Path(filename)
-        
+
+        if not file_path.exists():
+            # prepare_filename puede devolver la extensión previa al merge
+            # (p.ej. .mp4 cuando el resultado final fue .webm/.mkv)
+            candidates = [
+                p for p in DOWNLOADS_DIR.glob(f"{info.get('id', '')}_{suffix}.*")
+                if p.suffix not in {".part", ".json"}
+            ]
+            if candidates:
+                file_path = max(candidates, key=lambda p: p.stat().st_mtime)
+
         if not file_path.exists():
             raise HTTPException(
                 status_code=500,
