@@ -182,12 +182,16 @@ def translate_text(
             import torch
             inputs = {k: v.to("cuda") for k, v in inputs.items()}
         
-        # Generar traducción
+        # Generar traducción — mismos parámetros de calidad que el camino DP
+        # (_translate_one): sin ellos, /api/translate y el WebSocket producían
+        # traducciones con repeticiones que el resto del pipeline ya evita
         translated_tokens = model.generate(
             **inputs,
             forced_bos_token_id=tokenizer.lang_code_to_id[target_code],
             max_length=NLLB_MAX_LENGTH,
             num_beams=beam_size,
+            repetition_penalty=NLLB_REPETITION_PENALTY,
+            no_repeat_ngram_size=NLLB_NO_REPEAT_NGRAM,
             early_stopping=True,
         )
         
