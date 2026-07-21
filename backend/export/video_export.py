@@ -187,11 +187,18 @@ async def generate_tts_audio(
         raw_file = temp_dir / f"raw_{i:04d}.mp3"
         fit_file = temp_dir / f"fit_{i:04d}.mp3"
 
-        async with semaphore:
-            communicate = edge_tts.Communicate(text, voice, rate=rate)
-            await communicate.save(str(raw_file))
+        # Un clip fallido (red, edge-tts) no debe tumbar el export completo
+        # cuando el video ya está quemado: su intervalo queda en silencio.
+        try:
+            async with semaphore:
+                communicate = edge_tts.Communicate(text, voice, rate=rate)
+                await communicate.save(str(raw_file))
 
-        await asyncio.to_thread(_fit_clip_to_duration, raw_file, fit_file, target_dur)
+            await asyncio.to_thread(_fit_clip_to_duration, raw_file, fit_file, target_dur)
+        except Exception as e:
+            logger.warning(f"Clip TTS {i} falló ({e}) — su intervalo quedará en silencio")
+            return None
+
         return {
             "file": fit_file,
             "start": float(seg.get("start", 0)),
