@@ -3,30 +3,44 @@ GPU Stats Monitor para Flowxy-Translator
 Monitorea estadísticas de NVIDIA GPU usando pynvml
 """
 import logging
-from typing import Dict, Any, Optional
+import threading
+from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
+
+# NVML se inicializa una sola vez por proceso y el handle se reutiliza.
+# Antes cada llamada hacía nvmlInit + nvmlShutdown: trabajo repetido en cada
+# poll (4s durante tareas) y una carrera — el shutdown es global, así que dos
+# requests concurrentes podían pisarse (uno cerraba NVML mientras el otro leía).
+_nvml_lock = threading.Lock()
+_nvml_handles: Dict[int, Any] = {}
+
+
+def _get_nvml_handle(device_index: int):
+    import pynvml
+
+    with _nvml_lock:
+        if device_index not in _nvml_handles:
+            pynvml.nvmlInit()
+            _nvml_handles[device_index] = pynvml.nvmlDeviceGetHandleByIndex(device_index)
+        return _nvml_handles[device_index]
 
 
 def get_gpu_stats(device_index: int = 0) -> Dict[str, Any]:
     """
     Obtiene estadísticas de la GPU
-    
+
     Args:
         device_index: Índice de la GPU (default 0)
-        
+
     Returns:
         Dict con estadísticas de GPU o error info
     """
     try:
         import pynvml
-        
-        # Inicializar NVML
-        pynvml.nvmlInit()
-        
-        # Obtener handle de la GPU
-        handle = pynvml.nvmlDeviceGetHandleByIndex(device_index)
-        
+
+        handle = _get_nvml_handle(device_index)
+
         # Obtener información
         name = pynvml.nvmlDeviceGetName(handle)
         
@@ -47,22 +61,19 @@ def get_gpu_stats(device_index: int = 0) -> Dict[str, Any]:
             temperature = pynvml.nvmlDeviceGetTemperature(
                 handle, pynvml.NVML_TEMPERATURE_GPU
             )
-        except:
+        except Exception:
             temperature = None
-        
+
         # Power
         try:
             power_usage = pynvml.nvmlDeviceGetPowerUsage(handle) / 1000.0  # Watts
             power_limit = pynvml.nvmlDeviceGetPowerManagementLimit(handle) / 1000.0
             power_percent = (power_usage / power_limit) * 100
-        except:
+        except Exception:
             power_usage = None
             power_limit = None
             power_percent = None
-        
-        # Cleanup
-        pynvml.nvmlShutdown()
-        
+
         return {
             "available": True,
             "device_index": device_index,
@@ -92,6 +103,10 @@ def get_gpu_stats(device_index: int = 0) -> Dict[str, Any]:
             "error": "pynvml no instalado",
         }
     except Exception as e:
+        # Handle inválido (driver reiniciado, suspend/resume): descartar para
+        # que la próxima llamada reinicialice NVML
+        with _nvml_lock:
+            _nvml_handles.clear()
         logger.error(f"Error obteniendo GPU stats: {e}")
         return {
             "available": False,
